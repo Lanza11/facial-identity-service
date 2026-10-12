@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from facial_identity.domain.errors import FacialIdentityError
+from facial_identity.domain.errors import FacialIdentityError, InvalidRequestError
 
 _MEDIA_TYPE = "application/problem+json"
 
@@ -35,4 +35,10 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
         detail = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
-        return problem(422, "VALIDATION_ERROR", "Solicitud inválida", detail, request.url.path)
+        return problem(
+            InvalidRequestError.status,
+            InvalidRequestError.slug,
+            InvalidRequestError.title,
+            detail,
+            request.url.path,
+        )

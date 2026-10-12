@@ -48,6 +48,12 @@ class NoEnrollmentsError(FacialIdentityError):
     title = "El sujeto no tiene rostros registrados"
 
 
+class InvalidRequestError(FacialIdentityError):
+    slug = "VALIDATION_ERROR"
+    status = 422
+    title = "Solicitud inválida"
+
+
 class InvalidImageError(FacialIdentityError):
     slug = "INVALID_IMAGE"
     status = 422

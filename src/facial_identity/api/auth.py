@@ -10,7 +10,12 @@ from fastapi.security import APIKeyHeader
 
 from facial_identity.domain.errors import FacialIdentityError
 
-_api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
+_api_key_header = APIKeyHeader(
+    name="x-api-key",
+    scheme_name="ApiKey",
+    description="Valor de `FIS_API_KEY` en el `.env` del servicio (por defecto `demo-key`).",
+    auto_error=False,
+)
 
 
 class UnauthorizedError(FacialIdentityError):

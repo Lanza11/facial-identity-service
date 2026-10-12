@@ -1,4 +1,5 @@
-"""Contrato público normalizado. Nada de aquí refleja la forma de las respuestas de CompreFace."""
+"""Contrato público normalizado. Nada de aquí refleja la forma de las respuestas de CompreFace.
+Las descripciones y ejemplos de los campos son los que muestra Swagger (/docs)."""
 
 from __future__ import annotations
 
@@ -19,24 +20,42 @@ from facial_identity.domain.models import (
     VerificationResult,
 )
 
+_EXAMPLE_NAME = "Ana Pérez"
+_EXAMPLE_EXTERNAL_ID = "CUST-1001"
+_SUBJECT_ID = "1c0e6a52-7b8f-4f4e-9a51-2f7f0c9d3b11"
+_SCORE = "Similitud entre 0 y 1 calculada por el motor (1 = mismo rostro)."
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class SubjectCreate(ApiModel):
-    external_id: str = Field(min_length=1, max_length=64, examples=["CUST-1001"])
-    display_name: str = Field(min_length=1, max_length=120, examples=["Ana Pérez"])
+    external_id: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Identificador de la persona en el sistema consumidor (p. ej. el `customerId` "
+        "de la app). Único. Nunca se envía al motor.",
+        examples=[_EXAMPLE_EXTERNAL_ID],
+    )
+    display_name: str = Field(
+        min_length=1, max_length=120, description="Nombre para mostrar.", examples=[_EXAMPLE_NAME]
+    )
 
 
 class SubjectOut(ApiModel):
-    subject_id: str
-    external_id: str
-    display_name: str
-    status: SubjectStatus
-    enrollments: int
-    failed_attempts: int
-    locked_until: datetime | None
+    subject_id: str = Field(
+        description="Id interno (UUID). Úsalo en las rutas `/v1/subjects/{subjectId}/…`.",
+        examples=[_SUBJECT_ID],
+    )
+    external_id: str = Field(examples=[_EXAMPLE_EXTERNAL_ID])
+    display_name: str = Field(examples=[_EXAMPLE_NAME])
+    status: SubjectStatus = Field(description="`ACTIVE` o `INACTIVE` (desactivada).")
+    enrollments: int = Field(description="Cantidad de rostros registrados.", examples=[1])
+    failed_attempts: int = Field(description="Verificaciones fallidas seguidas.", examples=[0])
+    locked_until: datetime | None = Field(
+        description="Si tiene valor y es futuro, la persona está bloqueada hasta esa hora (UTC)."
+    )
     created_at: datetime
 
     @classmethod
@@ -54,8 +73,8 @@ class SubjectOut(ApiModel):
 
 
 class EnrollmentOut(ApiModel):
-    enrollment_id: str
-    subject_id: str
+    enrollment_id: str = Field(description="Id del rostro registrado.")
+    subject_id: str = Field(examples=[_SUBJECT_ID])
     created_at: datetime
 
     @classmethod
@@ -68,11 +87,14 @@ class EnrollmentOut(ApiModel):
 
 
 class VerificationOut(ApiModel):
-    verification_id: str
-    subject_id: str
-    decision: Decision
-    score: float
-    reason_code: ReasonCode
+    verification_id: str = Field(description="Id de la operación (aparece en la auditoría).")
+    subject_id: str = Field(examples=[_SUBJECT_ID])
+    decision: Decision = Field(
+        description="`MATCH` es la misma persona · `NO_MATCH` es otra persona · "
+        "`INCONCLUSIVE` es zona gris: conviene pedir otra foto."
+    )
+    score: float = Field(description=_SCORE, examples=[0.9994])
+    reason_code: ReasonCode = Field(description="Por qué se tomó la decisión.")
 
     @classmethod
     def of(cls, result: VerificationResult) -> VerificationOut:
@@ -86,10 +108,10 @@ class VerificationOut(ApiModel):
 
 
 class CandidateOut(ApiModel):
-    subject_id: str
-    external_id: str
-    display_name: str
-    score: float
+    subject_id: str = Field(examples=[_SUBJECT_ID])
+    external_id: str = Field(examples=[_EXAMPLE_EXTERNAL_ID])
+    display_name: str = Field(examples=[_EXAMPLE_NAME])
+    score: float = Field(description=_SCORE, examples=[0.9971])
 
     @classmethod
     def of(cls, candidate: Candidate) -> CandidateOut:
@@ -102,10 +124,14 @@ class CandidateOut(ApiModel):
 
 
 class IdentificationOut(ApiModel):
-    identification_id: str
-    decision: Decision
-    reason_code: ReasonCode
-    candidates: list[CandidateOut]
+    identification_id: str = Field(description="Id de la operación (aparece en la auditoría).")
+    decision: Decision = Field(description="Decisión sobre el mejor candidato.")
+    reason_code: ReasonCode = Field(
+        description="`NO_CANDIDATES` si ninguna persona activa supera el umbral mínimo."
+    )
+    candidates: list[CandidateOut] = Field(
+        description="Personas activas parecidas, de mayor a menor similitud."
+    )
 
     @classmethod
     def of(cls, result: IdentificationResult) -> IdentificationOut:
@@ -119,12 +145,17 @@ class IdentificationOut(ApiModel):
 
 class AuditEventOut(ApiModel):
     event_id: str
-    action: str
+    action: str = Field(examples=["FACE_VERIFIED"])
     occurred_at: datetime
-    subject_id: str | None
-    outcome: str
-    detail: str
-    image_sha256: str | None
+    subject_id: str | None = Field(examples=[_SUBJECT_ID])
+    outcome: str = Field(
+        description="`OK`, la decisión (`MATCH`, `NO_MATCH`…) o el `slug` del error.",
+        examples=["MATCH"],
+    )
+    detail: str = Field(examples=["score=0.9994"])
+    image_sha256: str | None = Field(
+        description="Huella SHA-256 de la imagen enviada. La imagen nunca se guarda."
+    )
 
     @classmethod
     def of(cls, event: AuditEvent) -> AuditEventOut:
@@ -140,6 +171,19 @@ class AuditEventOut(ApiModel):
 
 
 class HealthOut(ApiModel):
-    status: str
-    engine: str
-    engine_status: str
+    status: str = Field(description="`UP` o `DEGRADED` (el motor no responde).", examples=["UP"])
+    engine: str = Field(description="Motor en uso: `compreface` o `fake`.", examples=["compreface"])
+    engine_status: str = Field(examples=["UP"])
+
+
+class ProblemDetail(BaseModel):
+    """Formato de todos los errores (RFC 7807, `application/problem+json`)."""
+
+    type: str = Field(examples=["urn:facial-identity:problem:no_face"])
+    title: str = Field(examples=["No se detectó ningún rostro en la imagen"])
+    status: int = Field(examples=[422])
+    detail: str
+    slug: str = Field(
+        description="Código estable para que el consumidor decida qué hacer.", examples=["NO_FACE"]
+    )
+    instance: str = Field(description="Ruta que produjo el error.")
