@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from facial_identity.adapters.compreface_engine import CompreFaceEngine
 from facial_identity.adapters.fake_engine import FakeFaceEngine
 from facial_identity.adapters.sqlite_store import SqliteStore
+from facial_identity.api.openapi import SWAGGER_UI_PARAMETERS, TAGS, build_description
 from facial_identity.api.problems import register_problem_handlers
 from facial_identity.api.routes import health_router, router
 from facial_identity.application.use_cases import FacialIdentityService, Policies
@@ -69,10 +70,9 @@ def create_app(
     app = FastAPI(
         title="facial-identity-service",
         version="0.1.0",
-        description=(
-            "Prototipo de servicio independiente de identificación facial. "
-            "Registra, verifica (1:1) e identifica (1:N) rostros sobre un motor intercambiable."
-        ),
+        description=build_description(settings),
+        openapi_tags=TAGS,
+        swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
     )
     app.state.settings = settings
     app.state.service = service or build_service(settings)

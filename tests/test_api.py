@@ -62,3 +62,10 @@ def test_eliminar_y_consultar_auditoria(client):
     assert client.get("/v1/subjects").json() == []
     audit = client.get("/v1/audit", params={"subjectId": subject_id}).json()
     assert [e["action"] for e in audit] == ["SUBJECT_DELETED", "SUBJECT_CREATED"]
+
+
+def test_errores_de_validacion_como_problem_details(client):
+    response = client.post("/v1/subjects", json={"externalId": ""})
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["slug"] == "VALIDATION_ERROR"

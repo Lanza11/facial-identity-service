@@ -2,9 +2,18 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Path, Query, Request, Response, UploadFile, status
 
 from facial_identity.api.auth import require_api_key
+from facial_identity.api.openapi import (
+    IMAGE_DESCRIPTION,
+    TAG_AUDIT,
+    TAG_ENROLLMENT,
+    TAG_HEALTH,
+    TAG_RECOGNITION,
+    TAG_SUBJECTS,
+    problem_responses,
+)
 from facial_identity.api.schemas import (
     AuditEventOut,
     EnrollmentOut,
@@ -15,14 +24,27 @@ from facial_identity.api.schemas import (
     VerificationOut,
 )
 from facial_identity.application.use_cases import FacialIdentityService
-from facial_identity.domain.errors import InvalidImageError
+from facial_identity.domain.errors import (
+    EngineUnavailableError,
+    InvalidImageError,
+    MaxEnrollmentsReachedError,
+    MultipleFacesDetectedError,
+    NoEnrollmentsError,
+    NoFaceDetectedError,
+    SubjectAlreadyExistsError,
+    SubjectInactiveError,
+    SubjectLockedError,
+    SubjectNotFoundError,
+)
 
 
 def get_service(request: Request) -> FacialIdentityService:
     return request.app.state.service
 
 
-def read_image(request: Request, image: Annotated[UploadFile, File()]) -> bytes:
+def read_image(
+    request: Request, image: Annotated[UploadFile, File(description=IMAGE_DESCRIPTION)]
+) -> bytes:
     if not (image.content_type or "").startswith("image/"):
         raise InvalidImageError("El archivo debe ser una imagen (jpeg, png, webp…)")
     content = image.file.read(request.app.state.settings.fis_max_image_bytes + 1)
@@ -35,12 +57,15 @@ def read_image(request: Request, image: Annotated[UploadFile, File()]) -> bytes:
 
 Service = Annotated[FacialIdentityService, Depends(get_service)]
 Image = Annotated[bytes, Depends(read_image)]
+SubjectId = Annotated[str, Path(description="El `subjectId` que devolvió `POST /v1/subjects`.")]
 
-health_router = APIRouter(tags=["health"])
+_IMAGE_ERRORS = (InvalidImageError, NoFaceDetectedError, MultipleFacesDetectedError)
+
+health_router = APIRouter(tags=[TAG_HEALTH])
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_key)])
 
 
-@health_router.get("/health", response_model=HealthOut)
+@health_router.get("/health", response_model=HealthOut, summary="Estado del servicio y del motor")
 def health(service: Service) -> HealthOut:
     engine_up = service.is_engine_healthy()
     return HealthOut(
@@ -51,31 +76,67 @@ def health(service: Service) -> HealthOut:
 
 
 @router.post(
-    "/subjects", response_model=SubjectOut, status_code=status.HTTP_201_CREATED, tags=["subjects"]
+    "/subjects",
+    response_model=SubjectOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=[TAG_SUBJECTS],
+    summary="Crear persona",
+    description="Da de alta a una persona, todavía sin rostro. Guarda el `subjectId` de la "
+    "respuesta: lo necesitas para registrar y verificar su rostro.",
+    responses=problem_responses(SubjectAlreadyExistsError),
 )
 def create_subject(body: SubjectCreate, service: Service) -> SubjectOut:
     return SubjectOut.of(service.create_subject(body.external_id, body.display_name), 0)
 
 
-@router.get("/subjects", response_model=list[SubjectOut], tags=["subjects"])
+@router.get(
+    "/subjects",
+    response_model=list[SubjectOut],
+    tags=[TAG_SUBJECTS],
+    summary="Listar personas",
+    responses=problem_responses(),
+)
 def list_subjects(service: Service) -> list[SubjectOut]:
     return [SubjectOut.of(subject, count) for subject, count in service.list_subjects()]
 
 
-@router.post("/subjects/{subject_id}/deactivate", response_model=SubjectOut, tags=["subjects"])
-def deactivate_subject(subject_id: str, service: Service) -> SubjectOut:
+@router.post(
+    "/subjects/{subject_id}/deactivate",
+    response_model=SubjectOut,
+    tags=[TAG_SUBJECTS],
+    summary="Desactivar persona",
+    description="Baja lógica y reversible: conserva sus rostros, pero no se la puede verificar ni "
+    "aparece al identificar hasta que se reactive.",
+    responses=problem_responses(SubjectNotFoundError),
+)
+def deactivate_subject(subject_id: SubjectId, service: Service) -> SubjectOut:
     subject = service.deactivate_subject(subject_id)
     return SubjectOut.of(subject, service.count_enrollments(subject.id))
 
 
-@router.post("/subjects/{subject_id}/reactivate", response_model=SubjectOut, tags=["subjects"])
-def reactivate_subject(subject_id: str, service: Service) -> SubjectOut:
+@router.post(
+    "/subjects/{subject_id}/reactivate",
+    response_model=SubjectOut,
+    tags=[TAG_SUBJECTS],
+    summary="Reactivar persona",
+    description="Vuelve a activarla y reinicia su contador de intentos fallidos y su bloqueo.",
+    responses=problem_responses(SubjectNotFoundError),
+)
+def reactivate_subject(subject_id: SubjectId, service: Service) -> SubjectOut:
     subject = service.reactivate_subject(subject_id)
     return SubjectOut.of(subject, service.count_enrollments(subject.id))
 
 
-@router.delete("/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["subjects"])
-def delete_subject(subject_id: str, service: Service) -> Response:
+@router.delete(
+    "/subjects/{subject_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=[TAG_SUBJECTS],
+    summary="Eliminar persona (supresión total)",
+    description="Borra a la persona y todos sus rostros, también dentro del motor. Es "
+    "irreversible: corresponde al derecho de supresión de datos. La auditoría se conserva.",
+    responses=problem_responses(SubjectNotFoundError, EngineUnavailableError),
+)
+def delete_subject(subject_id: SubjectId, service: Service) -> Response:
     service.delete_subject(subject_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -84,26 +145,72 @@ def delete_subject(subject_id: str, service: Service) -> Response:
     "/subjects/{subject_id}/enrollments",
     response_model=EnrollmentOut,
     status_code=status.HTTP_201_CREATED,
-    tags=["faces"],
+    tags=[TAG_ENROLLMENT],
+    summary="Registrar un rostro de la persona",
+    description="Sube una foto de la persona. El motor detecta el rostro y guarda su *embedding* "
+    "(vector numérico) como referencia. Se permiten varias fotos por persona (hasta el máximo "
+    "configurado). Más de una foto ayuda con distintas luces o ángulos.",
+    responses=problem_responses(
+        *_IMAGE_ERRORS,
+        SubjectNotFoundError,
+        SubjectInactiveError,
+        SubjectLockedError,
+        MaxEnrollmentsReachedError,
+        EngineUnavailableError,
+    ),
 )
-def enroll_face(subject_id: str, image: Image, service: Service) -> EnrollmentOut:
+def enroll_face(subject_id: SubjectId, image: Image, service: Service) -> EnrollmentOut:
     return EnrollmentOut.of(service.enroll_face(subject_id, image))
 
 
-@router.post("/subjects/{subject_id}/verifications", response_model=VerificationOut, tags=["faces"])
-def verify_face(subject_id: str, image: Image, service: Service) -> VerificationOut:
+@router.post(
+    "/subjects/{subject_id}/verifications",
+    response_model=VerificationOut,
+    tags=[TAG_RECOGNITION],
+    summary="Verificar 1:1: ¿la foto es de esta persona?",
+    description="Compara la foto contra **los rostros registrados de esa persona** y devuelve la "
+    "mejor similitud y la decisión. Cada `NO_MATCH` suma un intento fallido; al llegar al "
+    "máximo, la persona queda bloqueada temporalmente (`SUBJECT_LOCKED`).",
+    responses=problem_responses(
+        *_IMAGE_ERRORS,
+        SubjectNotFoundError,
+        SubjectInactiveError,
+        NoEnrollmentsError,
+        SubjectLockedError,
+        EngineUnavailableError,
+    ),
+)
+def verify_face(subject_id: SubjectId, image: Image, service: Service) -> VerificationOut:
     return VerificationOut.of(service.verify_face(subject_id, image))
 
 
-@router.post("/identifications", response_model=IdentificationOut, tags=["faces"])
+@router.post(
+    "/identifications",
+    response_model=IdentificationOut,
+    tags=[TAG_RECOGNITION],
+    summary="Identificar 1:N: ¿de quién es la foto?",
+    description="Busca el rostro entre **todas las personas activas**, sin indicar quién es. "
+    "Devuelve los candidatos que superan el umbral mínimo, ordenados por similitud.",
+    responses=problem_responses(*_IMAGE_ERRORS, EngineUnavailableError),
+)
 def identify_face(image: Image, service: Service) -> IdentificationOut:
     return IdentificationOut.of(service.identify_face(image))
 
 
-@router.get("/audit", response_model=list[AuditEventOut], tags=["audit"])
+@router.get(
+    "/audit",
+    response_model=list[AuditEventOut],
+    tags=[TAG_AUDIT],
+    summary="Consultar la auditoría",
+    description="Eventos más recientes primero. Incluye éxitos y errores. Nunca incluye la "
+    "imagen, solo su hash SHA-256.",
+    responses=problem_responses(),
+)
 def list_audit(
     service: Service,
-    subject_id: Annotated[str | None, Query(alias="subjectId")] = None,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    subject_id: Annotated[
+        str | None, Query(alias="subjectId", description="Filtra por persona (opcional).")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=500, description="Máximo de eventos.")] = 100,
 ) -> list[AuditEventOut]:
     return [AuditEventOut.of(e) for e in service.audit_events(subject_id, limit)]
