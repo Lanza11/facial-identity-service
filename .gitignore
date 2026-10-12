@@ -1,0 +1,26 @@
+# Entorno
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Datos locales del prototipo (incluye biométricos: nunca al repo)
+data/
+*.db
+samples/
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# IDE
+.idea/
+.vscode/
