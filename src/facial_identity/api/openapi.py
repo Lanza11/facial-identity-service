@@ -6,7 +6,6 @@ from typing import Any
 
 from facial_identity.api.auth import UnauthorizedError
 from facial_identity.api.schemas import ProblemDetail
-from facial_identity.config import Settings
 from facial_identity.domain.errors import FacialIdentityError, InvalidRequestError
 
 TAG_HEALTH = "Salud"
@@ -49,53 +48,10 @@ IMAGE_DESCRIPTION = (
 )
 
 
-def build_description(settings: Settings) -> str:
-    match = settings.fis_match_threshold
-    gray = settings.fis_inconclusive_threshold
-    return f"""
-Servicio independiente de identificación facial (**prototipo**). Cualquier consumidor (app móvil,
-web administrativo…) lo usa para registrar rostros y luego comprobarlos. El motor que hace el
-reconocimiento (hoy **{settings.fis_engine}**) queda oculto detrás de esta API.
-
-### 🔑 Autenticación: ¿de dónde sale la API key?
-Todas las rutas `/v1/*` exigen el header **`x-api-key`**. Su valor es la variable
-**`FIS_API_KEY`** del archivo `.env` del servicio (por defecto: **`demo-key`**).
-
-1. Pulsa el botón **Authorize** (arriba a la derecha).
-2. Escribe `demo-key` (o tu `FIS_API_KEY`) y pulsa *Authorize*.
-3. Desde ese momento Swagger la envía en cada petición.
-
-> ⚠️ No la confundas con `COMPREFACE_API_KEY`: esa es la llave **interna** con la que este
-> servicio habla con CompreFace. Los consumidores nunca la ven ni la usan.
-
-### 🚀 Probar el flujo completo en 4 pasos
-1. **`POST /v1/subjects`** con `{{"externalId": "CUST-1001", "displayName": "Ana"}}`
-   → copia el `subjectId` de la respuesta.
-2. **`POST /v1/subjects/{{subjectId}}/enrollments`** → pega el `subjectId` y elige una foto de Ana
-   en el campo `image`. Así se registra su rostro.
-3. **`POST /v1/subjects/{{subjectId}}/verifications`** → sube **otra** foto. La respuesta dice si
-   es Ana.
-4. **`POST /v1/identifications`** → sube una foto sin decir de quién es. El servicio busca entre
-   todas las personas activas.
-
-### 📸 ¿Cómo viajan las imágenes?
-Como archivo en un formulario **`multipart/form-data`**, campo **`image`**: lo mismo que hace un
-`<input type="file">` en una página web. No hace falta convertirlas a base64. El servicio no
-guarda la foto. El motor extrae del rostro un vector numérico (*embedding*) y las comparaciones
-se hacen entre esos vectores.
-
-### 🧮 ¿Cómo se interpreta el resultado?
-| `score` (similitud) | `decision` | Significado |
-|---|---|---|
-| ≥ {match} | `MATCH` | Es la misma persona |
-| ≥ {gray} y < {match} | `INCONCLUSIVE` | Zona gris: pedir otra foto |
-| < {gray} | `NO_MATCH` | Es otra persona |
-
-### ❗ Errores
-Todos los errores usan el formato `application/problem+json` (RFC 7807), con un `slug` estable
-(`NO_FACE`, `MULTIPLE_FACES`, `SUBJECT_INACTIVE`, `SUBJECT_LOCKED`…). Cada endpoint lista
-abajo los que puede devolver.
-"""
+DESCRIPTION = (
+    "Servicio independiente de identificación facial (prototipo). Registra, verifica (1:1) e "
+    "identifica (1:N) rostros sobre un motor intercambiable."
+)
 
 
 def problem_responses(*errors: type[FacialIdentityError]) -> dict[int | str, dict[str, Any]]:
