@@ -242,6 +242,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/identifications `
 **Python (httpx):**
 ```python
 import httpx
+
 with open("ana2.jpg", "rb") as f:
     r = httpx.post(
         f"http://localhost:8080/v1/subjects/{subject_id}/verifications",
