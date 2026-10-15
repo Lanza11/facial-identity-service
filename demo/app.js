@@ -1,266 +1,781 @@
-// Consumidor de ejemplo del facial-identity-service: simula lo que haría la app móvil o el
-// web administrativo. Solo usa la API pública /v1 (nunca CompreFace directamente).
+// Demo del servicio de identificación facial: cuatro escenarios del negocio + modo técnico.
+// Solo consume la API pública /v1; toda decisión (umbrales, bloqueos, reglas) es del backend.
 
-const $ = (selector) => document.querySelector(selector);
-const state = { image: null, subjects: [] };
+import { api, ApiError, getApiKey, onApiCall, setApiKey } from "./api.js";
+import { FaceCheck, STEPS, preloadLandmarker } from "./liveness.js";
+import { getPhoto, removePhoto, savePhoto } from "./photos.js";
 
-const DECISION_LABEL = {
-  MATCH: ["Coincide", "badge-ok"],
-  NO_MATCH: ["No coincide", "badge-bad"],
-  INCONCLUSIVE: ["No concluyente", "badge-warn"],
+const view = document.querySelector("#view");
+const TECH_STORAGE = "fis-demo-tech";
+let leaveView = () => {};
+let preferredSubjectId = null;
+
+const API_MESSAGES = {
+  NO_FACE: ["No vemos un rostro en la foto", "Prueba con más luz, mirando de frente a la cámara."],
+  MULTIPLE_FACES: ["Aparece más de una persona", "Asegúrate de que solo haya una persona frente a la cámara."],
+  SUBJECT_INACTIVE: ["Este cliente está desactivado", "Reactívalo para poder usar su rostro."],
+  SUBJECT_LOCKED: [
+    "Bloqueado por seguridad",
+    "Hubo varios intentos fallidos seguidos. El cliente podrá intentarlo de nuevo en unos minutos.",
+  ],
+  MAX_ENROLLMENTS: ["Ya tiene suficientes fotos", "Este cliente alcanzó el máximo de fotos registradas."],
+  NO_ENROLLMENTS: ["Aún no tiene su rostro registrado", "Regístralo primero en el escenario Nuevo cliente."],
+  CONSENT_REQUIRED: ["Falta la autorización", "El cliente debe autorizar el uso de su rostro antes de registrarlo."],
+  SUBJECT_ALREADY_EXISTS: ["Ese cliente ya existe", "Ya hay un cliente registrado con esa identificación."],
+  ENGINE_UNAVAILABLE: [
+    "El reconocimiento no está disponible",
+    "Revisa que el servicio y CompreFace estén encendidos (docker compose up -d).",
+  ],
+  UNAUTHORIZED: ["Clave de acceso inválida", "Revisa la API key en el modo técnico."],
 };
-const ACTION_LABEL = {
-  SUBJECT_CREATED: "Persona creada",
+
+const LIVENESS_MESSAGES = {
+  NO_FACE: "No logramos ver un rostro a tiempo.",
+  NO_FRAMING: "No logramos centrar el rostro a tiempo.",
+  NO_BLINK: "No detectamos un parpadeo.",
+  NO_TURN: "No detectamos el giro de cabeza.",
+  NO_FRONT: "No volviste a mirar al frente a tiempo.",
+};
+
+const AUDIT_LABELS = {
+  SUBJECT_CREATED: "Cliente creado",
+  CONSENT_GRANTED: "Autorización registrada",
   FACE_ENROLLED: "Rostro registrado",
-  FACE_VERIFIED: "Verificación 1:1",
-  FACE_IDENTIFIED: "Identificación 1:N",
-  SUBJECT_DEACTIVATED: "Desactivada",
-  SUBJECT_REACTIVATED: "Reactivada",
-  SUBJECT_DELETED: "Eliminada",
+  FACE_VERIFIED: "Verificación",
+  FACE_IDENTIFIED: "Identificación",
+  SUBJECT_DEACTIVATED: "Cliente desactivado",
+  SUBJECT_REACTIVATED: "Cliente reactivado",
+  SUBJECT_DELETED: "Cliente eliminado",
 };
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const percent = (score) => Math.round((score ?? 0) * 100);
+const firstName = (name) => String(name ?? "").trim().split(/\s+/)[0];
+const brandMark = `<svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><ellipse cx="20" cy="20" rx="13" ry="16" fill="none" stroke="currentColor" stroke-width="3.2"/><path d="M13.5 23.5c3.6 3.4 9.4 3.4 13 0" fill="none" stroke="var(--mango)" stroke-width="3.2" stroke-linecap="round"/><circle cx="15.5" cy="16.5" r="2" fill="currentColor"/><circle cx="24.5" cy="16.5" r="2" fill="currentColor"/></svg>`;
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { "x-api-key": $("#api-key").value, ...(options.headers || {}) },
-  });
-  const body = response.status === 204 ? null : await response.json();
-  if (!response.ok) throw { status: response.status, body };
-  return body;
-}
-
-function imageForm() {
-  if (!state.image) throw { body: { slug: "SIN_FOTO", title: "Primero captura o sube una foto" } };
-  const form = new FormData();
-  form.append("image", state.image, "captura.jpg");
-  return form;
-}
-
-function showResult(html, json) {
-  $("#result").hidden = false;
-  $("#result-summary").innerHTML = html;
-  $("#result-json").textContent = JSON.stringify(json, null, 2);
-}
-
-function showError(error) {
-  const body = error.body || { title: String(error) };
-  showResult(
-    `<div class="verdict"><span class="badge badge-bad">${escapeHtml(body.slug || "ERROR")}</span>
-     <span>${escapeHtml(body.title || "")}</span></div>
-     ${body.detail && body.detail !== body.title ? `<p class="muted">${escapeHtml(body.detail)}</p>` : ""}`,
-    body,
-  );
-}
-
-function decisionHtml(decision, score, extra = "") {
-  const [label, css] = DECISION_LABEL[decision] || [decision, "badge-muted"];
-  const scoreHtml = score === undefined ? "" :
-    `<span class="muted">similitud ${(score * 100).toFixed(1)}%</span>
-     </div><div class="score-bar"><span style="width:${Math.round(score * 100)}%"></span>`;
-  return `<div class="verdict"><span class="badge ${css}">${label}</span>${extra}${scoreHtml}</div>`;
-}
-
-async function run(action) {
-  try {
-    await action();
-  } catch (error) {
-    showError(error);
+function describeError(error) {
+  if (error instanceof ApiError) {
+    const [title, text] = API_MESSAGES[error.slug] ?? ["Algo salió mal", error.body.detail ?? error.message];
+    return { title, text };
   }
-  await Promise.all([loadSubjects(), loadAudit()]);
+  if (error?.name === "NotAllowedError") {
+    return { title: "Sin permiso para la cámara", text: "Autoriza el uso de la cámara en el navegador e inténtalo de nuevo." };
+  }
+  if (error?.name === "NotFoundError") {
+    return { title: "No encontramos una cámara", text: "Conecta una cámara o, en modo técnico, usa una foto." };
+  }
+  return {
+    title: "No pudimos preparar la cámara",
+    text: "Revisa la conexión o descarga la prueba de vida con scripts/fetch_mediapipe.py.",
+  };
 }
 
-async function startCamera() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 960, facingMode: "user" },
+function errorBox(error) {
+  const { title, text } = describeError(error);
+  return `<div class="error-box" role="alert"><strong>${esc(title)}</strong><span>${esc(text)}</span></div>`;
+}
+
+function narrationMarkup(steps) {
+  return `<ol>${steps
+    .map(([title, text]) => `<li><div><strong>${esc(title)}</strong>${esc(text)}</div></li>`)
+    .join("")}</ol>`;
+}
+
+function setNarration(index) {
+  view.querySelectorAll(".narration li").forEach((li, i) => {
+    li.classList.toggle("done", i < index);
+    li.classList.toggle("active", i === index);
+  });
+}
+
+function scenarioLayout({ number, title, lead, steps, device }) {
+  return `
+    <a class="back" href="#inicio">← Volver a los escenarios</a>
+    <header class="scenario-head">
+      <div class="eyebrow">Escenario ${number} de 4</div>
+      <h1>${title}</h1>
+      <p class="lead">${lead}</p>
+    </header>
+    <div class="stage">
+      <aside class="narration" aria-label="Qué está pasando">
+        <div class="eyebrow">Qué está pasando</div>
+        ${narrationMarkup(steps)}
+      </aside>
+      <div class="device">${device}</div>
+    </div>`;
+}
+
+const STEP_LABELS = { position: "Te vemos", blink: "Parpadeo", turn: "Giro", front: "Listo" };
+
+function cameraMarkup() {
+  return `
+    <div class="cam" data-state="idle">
+      <video playsinline muted></video>
+      <div class="cam-oval"></div>
+      <div class="cam-loading">Preparando la cámara…</div>
+      <div class="cam-hint" aria-live="polite"></div>
+      <ul class="cam-steps">${STEPS.map((s) => `<li data-step="${s}">${STEP_LABELS[s]}</li>`).join("")}</ul>
+      <pre class="cam-debug tech-only"></pre>
+    </div>
+    <div class="actions tech-only">
+      <label class="btn quiet small">Usar una foto (sin prueba de vida)
+        <input type="file" accept="image/*" hidden data-photo-input>
+      </label>
+    </div>`;
+}
+
+function paintCamera(cam, update) {
+  cam.dataset.state = update.ok ? "good" : "guiding";
+  cam.querySelector(".cam-hint").textContent = update.hint ?? "";
+  const current = STEPS.indexOf(update.step);
+  cam.querySelectorAll(".cam-steps li").forEach((li, i) => {
+    li.classList.toggle("done", i < current);
+    li.classList.toggle("active", i === current);
+    if (li.dataset.step === "turn") li.textContent = `Giro a la ${update.direction}`;
+  });
+  const m = update.metrics ?? {};
+  cam.querySelector(".cam-debug").textContent = [
+    `rostros  ${m.faces ?? 0}`,
+    `parpadeo ${(m.blink ?? 0).toFixed(2)}`,
+    `giro     ${(m.turn ?? 0).toFixed(2)}`,
+    `ancho    ${(m.width ?? 0).toFixed(2)}`,
+    `centro   ${(m.centerX ?? 0).toFixed(2)}, ${(m.centerY ?? 0).toFixed(2)}`,
+  ].join("\n");
+}
+
+/**
+ * Muestra la cámara en `host`, ejecuta la prueba de vida y devuelve
+ * { passed, reason, blob, thumbnail, liveness }. Lanza error si la cámara no está disponible.
+ */
+function captureWithLiveness(host, { timeoutMs = 30000 } = {}) {
+  host.innerHTML = cameraMarkup();
+  const cam = host.querySelector(".cam");
+  cam.scrollIntoView({ behavior: "smooth", block: "center" });
+  const check = new FaceCheck(cam, { onUpdate: (update) => paintCamera(cam, update) });
+  let settled = false;
+
+  return new Promise((resolve, reject) => {
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      check.close();
+      resolve(result);
+    };
+    const previousLeave = leaveView;
+    leaveView = () => {
+      settled = true;
+      check.close();
+      previousLeave();
+    };
+    host.querySelector("[data-photo-input]").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (file) done({ passed: true, reason: null, blob: file, thumbnail: await fileThumbnail(file), liveness: "NOT_PERFORMED" });
     });
-    $("#video").srcObject = stream;
-    $("#btn-capture").disabled = false;
-    $("#btn-camera").textContent = "Cámara encendida";
-    $("#btn-camera").disabled = true;
-  } catch (error) {
-    showError({ body: { slug: "CAMARA", title: "No se pudo acceder a la cámara", detail: String(error) } });
-  }
+    check
+      .open()
+      .then(async () => {
+        cam.querySelector(".cam-loading").hidden = true;
+        const result = await check.run({ timeoutMs });
+        cam.dataset.state = result.passed ? "good" : "failed";
+        done({ ...result, liveness: result.passed ? "PASSED" : "FAILED" });
+      })
+      .catch((error) => {
+        if (settled) return;
+        check.close();
+        if (document.body.classList.contains("tech")) {
+          // En modo técnico se puede seguir con una foto subida (sin prueba de vida).
+          const { title, text } = describeError(error);
+          cam.querySelector(".cam-loading").textContent = `${title}. ${text} Puedes usar una foto.`;
+          return;
+        }
+        settled = true;
+        reject(error);
+      });
+  });
 }
 
-function capture() {
-  const video = $("#video");
-  const canvas = $("#canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d").drawImage(video, 0, 0);
-  canvas.toBlob(setImage, "image/jpeg", 0.9);
+function fileThumbnail(file) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = Math.round((image.height / image.width) * 320);
+      canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(image.src);
+      resolve(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    image.src = URL.createObjectURL(file);
+  });
 }
 
-function setImage(blob) {
-  state.image = blob;
-  const img = $("#snapshot");
-  img.src = URL.createObjectURL(blob);
-  img.hidden = false;
-  $("#snapshot-empty").hidden = true;
+function compareMarkup(registered, current, score, tone) {
+  const photo = (src, caption) =>
+    `<figure>${src ? `<img src="${src}" alt="${esc(caption)}">` : `<div class="no-photo">Foto no disponible en este equipo</div>`}<figcaption>${esc(caption)}</figcaption></figure>`;
+  const ring =
+    score === null
+      ? `<div></div>`
+      : `<div class="score-ring ${tone}" style="--value:${percent(score)}" role="img" aria-label="Similitud ${percent(score)}%"><span>${percent(score)}%</span></div>`;
+  return `<div class="compare">${photo(registered, "Foto registrada")}${ring}${photo(current, "Foto de ahora")}</div>`;
 }
 
-async function createSubject(event) {
-  event.preventDefault();
-  const form = event.target;
-  await run(async () => {
-    const subject = await api("/v1/subjects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        externalId: form.externalId.value.trim(),
-        displayName: form.displayName.value.trim(),
-      }),
+function verdictMarkup(kind, title, text) {
+  const icon = { ok: "✓", bad: "✕", warn: "?" }[kind];
+  return `<div class="verdict ${kind}"><div class="verdict-icon" aria-hidden="true">${icon}</div><h3>${title}</h3><p>${text}</p></div>`;
+}
+
+const toneOf = (decision) => ({ MATCH: "ok", NO_MATCH: "bad", INCONCLUSIVE: "warn" })[decision] ?? "warn";
+
+async function verifiableSubjects() {
+  const subjects = await api.listSubjects();
+  return subjects.filter((s) => s.status === "ACTIVE" && s.enrollments > 0);
+}
+
+function subjectOptions(subjects) {
+  const selected = subjects.some((s) => s.subjectId === preferredSubjectId) ? preferredSubjectId : subjects[0]?.subjectId;
+  return subjects
+    .map((s) => `<option value="${s.subjectId}" ${s.subjectId === selected ? "selected" : ""}>${esc(s.displayName)}</option>`)
+    .join("");
+}
+
+function noSubjectsMarkup() {
+  return `<div class="panel"><p>Primero registra al menos un cliente con su rostro.</p>
+    <div class="actions"><a class="btn" href="#nuevo-cliente">Ir a Nuevo cliente</a></div></div>`;
+}
+
+function renderHome() {
+  view.innerHTML = `
+    <section class="hero">
+      <div class="eyebrow">Demostración</div>
+      <h1>Tu rostro confirma que eres tú</h1>
+      <p class="lead">Registramos el rostro del cliente una sola vez. Desde ahí, en segundos y con una foto, sabemos si quien está al otro lado es realmente el titular.</p>
+    </section>
+    <section class="scenario-grid" aria-label="Escenarios">
+      ${scenarioCard("nuevo-cliente", "Nuevo cliente", "Asesor en sede · al firmar el crédito", "El cliente autoriza el uso de su rostro y lo registramos en segundos.")}
+      ${scenarioCard("titular", "¿Es realmente el titular?", "Cliente en la app · antes de pagar", "La app confirma que quien la usa es el dueño del contrato.")}
+      ${scenarioCard("quien-es", "¿Quién es este cliente?", "Asesor en sede · cliente sin documento", "Lo reconocemos entre todos los clientes registrados.")}
+      ${scenarioCard("intento-foto", "¿Y si intentan engañarlo con una foto?", "Prueba de seguridad", "Alguien muestra la foto del titular. La prueba de vida lo detiene.", "warning")}
+    </section>
+    <aside class="privacy-note">
+      <span aria-hidden="true">🔒</span>
+      <p><strong>Las fotos no se guardan.</strong> El servicio conserva solo una huella numérica del rostro, y únicamente con la autorización del cliente. El cliente puede pedir que se elimine cuando quiera.</p>
+    </aside>`;
+}
+
+function scenarioCard(hash, title, who, text, extra = "") {
+  return `<a class="scenario-card ${extra}" href="#${hash}">
+    <h2>${title}</h2><span class="who">${who}</span><p>${text}</p><span class="go">Empezar →</span></a>`;
+}
+
+function renderEnroll() {
+  view.innerHTML = scenarioLayout({
+    number: 1,
+    title: "Nuevo cliente",
+    lead: "Al firmar el crédito, el asesor registra el rostro del cliente. Solo se hace una vez.",
+    steps: [
+      ["Datos del cliente", "El asesor busca o crea al cliente en el sistema."],
+      ["Autorización", "El cliente acepta el uso de su rostro. Queda registrado, como pide la Ley 1581."],
+      ["Prueba de vida", "Parpadea y gira la cabeza: así sabemos que es una persona real."],
+      ["Listo", "Desde ahora su rostro sirve para confirmar su identidad."],
+    ],
+    device: `<div class="panel" id="enroll-panel"></div>`,
+  });
+  const panel = view.querySelector("#enroll-panel");
+  const head = (step) => `<div class="panel-head"><span class="who">Pantalla del asesor</span><span class="badge">Paso ${step} de 4</span></div>`;
+
+  const showData = (error) => {
+    setNarration(0);
+    panel.innerHTML = `${head(1)}
+      <h2>¿A quién vamos a registrar?</h2>
+      <form class="form-grid" id="subject-form">
+        <label class="field" for="f-name">Nombre completo<input id="f-name" name="name" required autocomplete="off" placeholder="Ana Pérez"></label>
+        <label class="field" for="f-id">Identificación del cliente<input id="f-id" name="externalId" required autocomplete="off" placeholder="CL-1001"></label>
+        <div class="actions"><button class="btn" type="submit">Continuar</button></div>
+      </form>
+      ${error ? errorBox(error) : ""}`;
+    panel.querySelector("#subject-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.target;
+      form.querySelector("button").disabled = true;
+      try {
+        const subject = await api.createSubject(form.externalId.value.trim(), form.name.value.trim());
+        showConsent(subject);
+      } catch (error) {
+        showData(error);
+      }
     });
-    form.reset();
-    showResult(
-      `<div class="verdict"><span class="badge badge-ok">Persona creada</span>
-       <span>${escapeHtml(subject.displayName)}</span></div>
-       <p class="muted">Ahora registra su rostro con la foto capturada.</p>`,
-      subject,
-    );
-    state.selected = subject.subjectId;
+    panel.querySelector("#f-name").focus();
+  };
+
+  const showConsent = (subject, error) => {
+    setNarration(1);
+    panel.innerHTML = `${head(2)}
+      <h2>${esc(firstName(subject.displayName))}, ¿nos autorizas?</h2>
+      <div class="consent-box">
+        <p>Autorizo a Motos del Caribe a guardar una representación numérica de mi rostro (no la foto) para confirmar mi identidad en sus canales. Puedo pedir que se elimine en cualquier momento.</p>
+        <label class="check" for="consent-check"><input id="consent-check" type="checkbox"> Sí, autorizo el uso de mi rostro</label>
+      </div>
+      <div class="actions"><button class="btn" id="consent-btn" disabled>Registrar autorización</button></div>
+      ${error ? errorBox(error) : ""}`;
+    const check = panel.querySelector("#consent-check");
+    const button = panel.querySelector("#consent-btn");
+    check.addEventListener("change", () => (button.disabled = !check.checked));
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api.recordConsent(subject.subjectId, "sede");
+        showCapture(subject);
+      } catch (error) {
+        showConsent(subject, error);
+      }
+    });
+  };
+
+  const showCapture = async (subject) => {
+    setNarration(2);
+    panel.innerHTML = `${head(3)}
+      <h2>Mira a la cámara, ${esc(firstName(subject.displayName))}</h2>
+      <div id="cam-host"></div>`;
+    try {
+      const capture = await captureWithLiveness(panel.querySelector("#cam-host"));
+      if (!capture.passed) {
+        showCaptureFailed(subject, capture);
+        return;
+      }
+      await api.enroll(subject.subjectId, capture.blob, capture.liveness);
+      savePhoto(subject.subjectId, capture.thumbnail);
+      showDone(subject, capture);
+    } catch (error) {
+      showRetry(subject, error);
+    }
+  };
+
+  const showRetry = (subject, error) => {
+    panel.innerHTML = `${head(3)}${errorBox(error)}
+      <div class="actions"><button class="btn" id="retry">Intentar de nuevo</button></div>`;
+    panel.querySelector("#retry").addEventListener("click", () => showCapture(subject));
+  };
+
+  const showCaptureFailed = (subject, capture) => {
+    panel.innerHTML = `${head(3)}
+      ${verdictMarkup("warn", "Intentémoslo otra vez", esc(LIVENESS_MESSAGES[capture.reason] ?? "No completamos la prueba de vida."))}
+      <div class="actions"><button class="btn" id="retry">Intentar de nuevo</button></div>`;
+    panel.querySelector("#retry").addEventListener("click", () => showCapture(subject));
+  };
+
+  const showDone = (subject, capture) => {
+    setNarration(4);
+    preferredSubjectId = subject.subjectId;
+    panel.innerHTML = `${head(4)}
+      <div class="result">
+        ${verdictMarkup("ok", `¡Listo! ${esc(firstName(subject.displayName))} ya tiene su rostro registrado`, "Desde ahora su rostro sirve para confirmar su identidad.")}
+        <div class="compare" style="grid-template-columns:1fr;max-width:180px"><figure><img src="${capture.thumbnail}" alt="Foto registrada"><figcaption>Foto registrada (solo en este equipo)</figcaption></figure></div>
+        <div class="actions"><a class="btn" href="#titular">Probar: ¿es el titular?</a><button class="btn ghost" id="another">Registrar otro cliente</button></div>
+      </div>`;
+    panel.querySelector("#another").addEventListener("click", () => showData());
+  };
+
+  showData();
+}
+
+function phoneMarkup(content) {
+  return `<div class="phone"><div class="phone-screen">
+      <div class="app-bar">${brandMark}<span>Tu crédito</span></div>
+      <div class="app-body" id="app-body">${content}</div>
+    </div></div>`;
+}
+
+function appHome(subject) {
+  return `
+    <div class="greeting">Hola, ${esc(firstName(subject.displayName))}</div>
+    <div class="app-card"><small>Tu próxima cuota (ejemplo)</small><span class="amount">$ 285.000</span><small>Vence el 20 de octubre</small></div>
+    <button class="btn mango" id="pay">Pagar cuota</button>`;
+}
+
+async function renderPhoneScenario(config) {
+  view.innerHTML = scenarioLayout({
+    number: config.number,
+    title: config.title,
+    lead: config.lead,
+    steps: config.steps,
+    device: `<div class="who-select" id="who"></div><div id="phone-host"></div><p class="device-caption">${config.caption}</p>`,
+  });
+  let subjects;
+  try {
+    subjects = await verifiableSubjects();
+  } catch (error) {
+    view.querySelector("#phone-host").innerHTML = errorBox(error);
+    return;
+  }
+  if (!subjects.length) {
+    view.querySelector("#phone-host").innerHTML = noSubjectsMarkup();
+    return;
+  }
+  view.querySelector("#who").innerHTML = `<label for="who-select">${config.whoLabel}</label><select id="who-select">${subjectOptions(subjects)}</select>`;
+  const select = view.querySelector("#who-select");
+  const start = () => {
+    const subject = subjects.find((s) => s.subjectId === select.value);
+    preferredSubjectId = subject.subjectId;
+    showAppHome(subject);
+  };
+  const showAppHome = (subject) => {
+    leaveView();
+    setNarration(0);
+    view.querySelector("#phone-host").innerHTML = phoneMarkup(appHome(subject));
+    view.querySelector("#pay").addEventListener("click", () => config.onPay(subject, body(), () => showAppHome(subject)));
+  };
+  const body = () => view.querySelector("#app-body");
+  select.addEventListener("change", start);
+  start();
+}
+
+function renderVerify() {
+  renderPhoneScenario({
+    number: 2,
+    title: "¿Es realmente el titular?",
+    lead: "Antes de pagar o al cambiar de celular, la app confirma que quien la usa es el dueño del contrato.",
+    whoLabel: "Cliente que abre la app:",
+    caption: "Simulación de la app del cliente.",
+    steps: [
+      ["El cliente abre la app", "Va a pagar su cuota."],
+      ["La app pide confirmar su identidad", "Una sola foto, sin contraseñas."],
+      ["Prueba de vida", "Parpadea y gira la cabeza frente al celular."],
+      ["Comparación", "Se compara con el rostro que registró al firmar."],
+    ],
+    onPay: (subject, body, restart) => verifyFlow(subject, body, restart),
   });
 }
 
-const enroll = () => run(async () => {
-  const subjectId = $("#enroll-subject").value;
-  const result = await api(`/v1/subjects/${subjectId}/enrollments`, { method: "POST", body: imageForm() });
-  const name = subjectName(subjectId);
-  showResult(
-    `<div class="verdict"><span class="badge badge-ok">Rostro registrado</span><span>${escapeHtml(name)}</span></div>`,
-    result,
-  );
-});
+async function verifyFlow(subject, body, restart) {
+  setNarration(1);
+  body.classList.remove("center");
+  body.innerHTML = `<div class="greeting" style="font-size:1.25rem">Antes de pagar, confirma que eres tú</div><div id="cam-host"></div>`;
+  let capture;
+  try {
+    setNarration(2);
+    capture = await captureWithLiveness(body.querySelector("#cam-host"));
+  } catch (error) {
+    body.innerHTML = `${errorBox(error)}<button class="btn" id="again">Volver</button>`;
+    body.querySelector("#again").addEventListener("click", restart);
+    return;
+  }
+  body.classList.add("center");
+  if (!capture.passed) {
+    body.innerHTML = `<div class="result">${verdictMarkup("warn", "Intentémoslo otra vez", esc(LIVENESS_MESSAGES[capture.reason] ?? "No completamos la prueba de vida."))}
+      <button class="btn" id="again">Intentar de nuevo</button></div>`;
+    body.querySelector("#again").addEventListener("click", () => verifyFlow(subject, body, restart));
+    return;
+  }
+  setNarration(3);
+  body.innerHTML = `<div class="spinner" role="status" aria-label="Comparando"></div><p>Comparando…</p>`;
+  try {
+    const result = await api.verify(subject.subjectId, capture.blob, capture.liveness);
+    const name = esc(firstName(subject.displayName));
+    const copy = {
+      MATCH: [`¡Eres tú, ${name}!`, "Puedes continuar con tu pago."],
+      NO_MATCH: [`No pudimos confirmar que eres ${name}`, "Por seguridad no seguimos con el pago."],
+      INCONCLUSIVE: ["No estamos seguros", "Probemos otra vez, con mejor luz y mirando de frente."],
+    }[result.decision];
+    const tone = toneOf(result.decision);
+    setNarration(4);
+    body.innerHTML = `<div class="result">
+      ${compareMarkup(getPhoto(subject.subjectId), capture.thumbnail, result.score, tone)}
+      ${verdictMarkup(tone, copy[0], copy[1])}
+      <div class="actions">${result.decision === "MATCH" ? `<button class="btn" id="again">Continuar</button>` : `<button class="btn" id="retry">Intentar de nuevo</button>`}</div>
+    </div>`;
+    body.querySelector("#again")?.addEventListener("click", restart);
+    body.querySelector("#retry")?.addEventListener("click", () => verifyFlow(subject, body, restart));
+  } catch (error) {
+    body.innerHTML = `${errorBox(error)}<button class="btn" id="again">Volver</button>`;
+    body.querySelector("#again").addEventListener("click", restart);
+  }
+}
 
-const verify = () => run(async () => {
-  const subjectId = $("#verify-subject").value;
-  const result = await api(`/v1/subjects/${subjectId}/verifications`, { method: "POST", body: imageForm() });
-  showResult(
-    decisionHtml(result.decision, result.score, `<span>¿Es ${escapeHtml(subjectName(subjectId))}?</span>`),
-    result,
-  );
-});
-
-const identify = () => run(async () => {
-  const result = await api("/v1/identifications", { method: "POST", body: imageForm() });
-  const best = result.candidates[0];
-  const who = best ? `<span>${escapeHtml(best.displayName)} <span class="muted">(${escapeHtml(best.externalId)})</span></span>` :
-    `<span class="muted">Ninguna persona registrada coincide</span>`;
-  showResult(decisionHtml(result.decision, best?.score, who), result);
-});
-
-function subjectAction(subjectId, action) {
-  if (action === "delete" && !confirm("¿Eliminar la persona y todos sus rostros? (supresión total)")) return;
-  run(async () => {
-    const result = action === "delete"
-      ? await api(`/v1/subjects/${subjectId}`, { method: "DELETE" })
-      : await api(`/v1/subjects/${subjectId}/${action}`, { method: "POST" });
-    const label = { delete: "Eliminada", deactivate: "Desactivada", reactivate: "Reactivada" }[action];
-    showResult(`<div class="verdict"><span class="badge badge-muted">${label}</span></div>`, result ?? { deleted: subjectId });
+function renderSpoof() {
+  renderPhoneScenario({
+    number: 4,
+    title: "¿Y si intentan engañarlo con una foto?",
+    lead: "Alguien consigue una foto del titular (impresa o en otro celular) e intenta hacerse pasar por esa persona.",
+    whoLabel: "Cliente al que intentan suplantar:",
+    caption: "Muestra a la cámara una foto del cliente, impresa o en otra pantalla.",
+    steps: [
+      ["Alguien tiene una foto del titular", "Impresa o en la pantalla de otro celular."],
+      ["Intenta confirmar con esa foto", "La pone frente a la cámara para pagar."],
+      ["La prueba de vida pide parpadear y girar", "Una foto no puede hacerlo."],
+      ["El intento se bloquea", "Y queda registrado en la auditoría."],
+    ],
+    onPay: (subject, body, restart) => spoofFlow(subject, body, restart),
   });
 }
 
-function subjectName(subjectId) {
-  return state.subjects.find((s) => s.subjectId === subjectId)?.displayName ?? subjectId;
-}
-
-async function loadSubjects() {
+async function spoofFlow(subject, body, restart) {
+  setNarration(1);
+  body.classList.remove("center");
+  body.innerHTML = `<div class="greeting" style="font-size:1.25rem">Antes de pagar, confirma que eres tú</div><div id="cam-host"></div>`;
+  let capture;
   try {
-    state.subjects = await api("/v1/subjects");
-  } catch {
-    state.subjects = [];
+    setNarration(2);
+    capture = await captureWithLiveness(body.querySelector("#cam-host"), { timeoutMs: 12000 });
+  } catch (error) {
+    body.innerHTML = `${errorBox(error)}<button class="btn" id="again">Volver</button>`;
+    body.querySelector("#again").addEventListener("click", restart);
+    return;
   }
-  renderSubjectSelects();
-  renderSubjectsTable();
+  body.classList.add("center");
+  if (capture.passed) {
+    body.innerHTML = `<div class="result">${verdictMarkup("ok", "Aquí hay una persona real", "Superó la prueba de vida. Para este escenario muestra una foto impresa o en otra pantalla.")}
+      <button class="btn" id="again">Intentar con una foto</button></div>`;
+    body.querySelector("#again").addEventListener("click", () => spoofFlow(subject, body, restart));
+    return;
+  }
+  setNarration(3);
+  body.innerHTML = `<div class="result">
+      ${verdictMarkup("bad", "No detectamos a una persona real", `${esc(LIVENESS_MESSAGES[capture.reason] ?? "")} Por seguridad no seguimos con el pago.`)}
+      <div class="callout" id="without"><strong>¿Y sin prueba de vida?</strong><span>Consultando qué habría respondido el reconocimiento…</span></div>
+      <button class="btn ghost" id="again">Volver a intentar</button>
+    </div>`;
+  body.querySelector("#again").addEventListener("click", () => spoofFlow(subject, body, restart));
+  const without = body.querySelector("#without");
+  try {
+    const result = await api.identify(capture.blob, capture.liveness);
+    const best = result.candidates[0];
+    without.classList.add("bad");
+    without.innerHTML = best
+      ? `<strong>Sin prueba de vida, la foto habría pasado</strong><span>El reconocimiento por sí solo habría dicho que es ${esc(best.displayName)} (${percent(best.score)}% de similitud). Por eso la prueba de vida es indispensable.</span>`
+      : `<strong>Tampoco habría coincidido</strong><span>Esta vez el reconocimiento no encontró a nadie parecido, pero con una foto nítida del titular sí podría.</span>`;
+  } catch {
+    without.innerHTML = `<strong>¿Y sin prueba de vida?</strong><span>La foto no tenía un rostro claro para compararlo.</span>`;
+  }
+  setNarration(4);
 }
 
-function renderSubjectSelects() {
-  document.querySelectorAll(".subject-select").forEach((select) => {
-    const previous = state.selected || select.value;
-    select.innerHTML = state.subjects.length
-      ? state.subjects.map((s) =>
-          `<option value="${s.subjectId}">${escapeHtml(s.displayName)} · ${escapeHtml(s.externalId)}` +
-          `${s.status === "INACTIVE" ? " (inactiva)" : ""} · ${s.enrollments} rostro(s)</option>`).join("")
-      : `<option value="">— crea una persona primero —</option>`;
-    if (state.subjects.some((s) => s.subjectId === previous)) select.value = previous;
+function renderIdentify() {
+  view.innerHTML = scenarioLayout({
+    number: 3,
+    title: "¿Quién es este cliente?",
+    lead: "Llega un cliente a la sede sin su documento. Con su rostro lo encontramos entre todos los clientes registrados.",
+    steps: [
+      ["Llega un cliente sin documento", "El asesor no sabe quién es."],
+      ["Prueba de vida", "El cliente parpadea y gira la cabeza frente a la cámara."],
+      ["Búsqueda", "Se compara con todos los clientes activos registrados."],
+      ["Resultado", "El asesor ve quién es, o que no está registrado."],
+    ],
+    device: `<div class="panel" id="identify-panel"></div>`,
   });
-  state.selected = null;
+  const panel = view.querySelector("#identify-panel");
+  const head = `<div class="panel-head"><span class="who">Pantalla del asesor</span></div>`;
+
+  const showStart = () => {
+    setNarration(0);
+    panel.innerHTML = `${head}<h2>Identificar a un cliente</h2>
+      <p class="lead" style="font-size:1rem">Pídele al cliente que mire a la cámara. No necesitas saber su nombre.</p>
+      <div class="actions"><button class="btn" id="start">Empezar</button></div>`;
+    panel.querySelector("#start").addEventListener("click", showCapture);
+  };
+
+  const showCapture = async () => {
+    setNarration(1);
+    panel.innerHTML = `${head}<h2>Mira a la cámara</h2><div id="cam-host"></div>`;
+    let capture;
+    try {
+      capture = await captureWithLiveness(panel.querySelector("#cam-host"));
+    } catch (error) {
+      panel.innerHTML = `${head}${errorBox(error)}<div class="actions"><button class="btn" id="again">Intentar de nuevo</button></div>`;
+      panel.querySelector("#again").addEventListener("click", showCapture);
+      return;
+    }
+    if (!capture.passed) {
+      panel.innerHTML = `${head}${verdictMarkup("warn", "Intentémoslo otra vez", esc(LIVENESS_MESSAGES[capture.reason] ?? ""))}
+        <div class="actions"><button class="btn" id="again">Intentar de nuevo</button></div>`;
+      panel.querySelector("#again").addEventListener("click", showCapture);
+      return;
+    }
+    setNarration(2);
+    panel.innerHTML = `${head}<div class="result"><div class="spinner" role="status" aria-label="Buscando"></div><p>Buscando entre los clientes…</p></div>`;
+    try {
+      showResult(await api.identify(capture.blob, capture.liveness), capture);
+    } catch (error) {
+      panel.innerHTML = `${head}${errorBox(error)}<div class="actions"><button class="btn" id="again">Intentar de nuevo</button></div>`;
+      panel.querySelector("#again").addEventListener("click", showCapture);
+    }
+  };
+
+  const showResult = (result, capture) => {
+    setNarration(4);
+    const best = result.candidates[0];
+    const tone = best ? toneOf(result.decision) : "bad";
+    const verdict = best
+      ? result.decision === "MATCH"
+        ? verdictMarkup("ok", `Es ${esc(best.displayName)}`, `Identificación del cliente: ${esc(best.externalId)}`)
+        : verdictMarkup("warn", `Podría ser ${esc(best.displayName)}`, "La similitud no es suficiente. Pide un documento para confirmar.")
+      : verdictMarkup("bad", "No encontramos a esta persona", "No está entre los clientes registrados.");
+    panel.innerHTML = `${head}<div class="result">
+      ${compareMarkup(best ? getPhoto(best.subjectId) : null, capture.thumbnail, best ? best.score : null, tone)}
+      ${verdict}
+      <div class="actions"><button class="btn" id="again">Identificar a otra persona</button>${best ? "" : `<a class="btn ghost" href="#nuevo-cliente">Registrarlo como nuevo cliente</a>`}</div>
+    </div>`;
+    panel.querySelector("#again").addEventListener("click", showCapture);
+  };
+
+  showStart();
 }
 
-function renderSubjectsTable() {
-  $("#subjects-body").innerHTML = state.subjects.map((s) => {
-    const active = s.status === "ACTIVE";
-    const locked = s.lockedUntil && new Date(s.lockedUntil) > new Date();
-    return `<tr>
-      <td>${escapeHtml(s.displayName)}</td>
-      <td>${escapeHtml(s.externalId)}</td>
-      <td><span class="badge ${active ? "badge-ok" : "badge-muted"}">${active ? "Activa" : "Inactiva"}</span>
-          ${locked ? '<span class="badge badge-warn">Bloqueada</span>' : ""}</td>
-      <td>${s.enrollments}</td>
-      <td>${s.failedAttempts}</td>
-      <td class="actions-cell">
-        <button class="small secondary" data-id="${s.subjectId}" data-action="${active ? "deactivate" : "reactivate"}">
-          ${active ? "Desactivar" : "Reactivar"}</button>
-        <button class="small danger" data-id="${s.subjectId}" data-action="delete">Eliminar</button>
-      </td></tr>`;
-  }).join("") || `<tr><td colspan="6" class="muted">Sin personas registradas.</td></tr>`;
-}
-
-async function loadAudit() {
-  let events = [];
+async function renderSubjects() {
+  view.innerHTML = `<header class="scenario-head"><div class="eyebrow">Modo técnico</div><h1>Personas registradas</h1>
+    <p class="lead">Desactivar es reversible. Eliminar borra a la persona y su rostro también en el motor.</p></header>
+    <div id="subjects"><div class="spinner"></div></div>`;
+  const host = view.querySelector("#subjects");
+  let subjects;
   try {
-    events = await api("/v1/audit?limit=50");
-  } catch {
-    /* sin API key válida no hay auditoría que mostrar */
+    subjects = await api.listSubjects();
+  } catch (error) {
+    host.innerHTML = errorBox(error);
+    return;
   }
-  $("#audit-body").innerHTML = events.map((e) => {
-    const ok = ["OK", "MATCH"].includes(e.outcome);
-    const warn = e.outcome === "INCONCLUSIVE";
-    return `<tr>
-      <td>${new Date(e.occurredAt).toLocaleTimeString()}</td>
-      <td>${ACTION_LABEL[e.action] || e.action}</td>
-      <td><span class="badge ${ok ? "badge-ok" : warn ? "badge-warn" : "badge-bad"}">${escapeHtml(e.outcome)}</span></td>
-      <td>${escapeHtml(e.subjectId ? subjectName(e.subjectId) : "—")}</td>
-      <td class="hash">${escapeHtml(e.detail)} ${e.imageSha256 ? `img:${e.imageSha256.slice(0, 10)}…` : ""}</td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="5" class="muted">Sin eventos.</td></tr>`;
+  if (!subjects.length) {
+    host.innerHTML = `<div class="table-wrap"><p class="empty">Aún no hay personas registradas.</p></div>`;
+    return;
+  }
+  host.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>Foto</th><th>Nombre</th><th>Identificación</th><th>Estado</th><th>Autorización</th><th>Rostros</th><th>Fallos</th><th></th></tr></thead>
+    <tbody>${subjects.map(subjectRow).join("")}</tbody></table></div>`;
+  host.querySelector("tbody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const { id, action } = button.dataset;
+    if (action === "remove" && !window.confirm("¿Eliminar a esta persona y su rostro? No se puede deshacer.")) return;
+    button.disabled = true;
+    try {
+      await api[action](id);
+      if (action === "remove") removePhoto(id);
+      renderSubjects();
+    } catch (error) {
+      host.insertAdjacentHTML("afterbegin", errorBox(error));
+    }
+  });
 }
 
-async function loadHealth() {
+function subjectRow(s) {
+  const active = s.status === "ACTIVE";
+  const locked = s.lockedUntil && new Date(s.lockedUntil) > new Date();
+  const photo = getPhoto(s.subjectId);
+  return `<tr>
+    <td>${photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb"></span>`}</td>
+    <td>${esc(s.displayName)}</td>
+    <td class="mono">${esc(s.externalId)}</td>
+    <td><span class="badge ${active ? "ok" : ""}">${active ? "Activa" : "Inactiva"}</span> ${locked ? `<span class="badge bad">Bloqueada</span>` : ""}</td>
+    <td>${s.consentedAt ? new Date(s.consentedAt).toLocaleString() : `<span class="badge bad">Pendiente</span>`}</td>
+    <td>${s.enrollments}</td>
+    <td>${s.failedAttempts}</td>
+    <td><div class="actions">
+      <button class="btn small ghost" data-id="${s.subjectId}" data-action="${active ? "deactivate" : "reactivate"}">${active ? "Desactivar" : "Reactivar"}</button>
+      <button class="btn small danger" data-id="${s.subjectId}" data-action="remove">Eliminar</button>
+    </div></td></tr>`;
+}
+
+async function renderAudit() {
+  view.innerHTML = `<header class="scenario-head"><div class="eyebrow">Modo técnico</div><h1>Auditoría</h1>
+    <p class="lead">Cada operación queda registrada con su resultado y la prueba de vida. De la imagen solo se guarda su huella SHA-256.</p></header>
+    <div id="audit"><div class="spinner"></div></div>`;
+  const host = view.querySelector("#audit");
   try {
-    const health = await fetch("/health").then((r) => r.json());
-    const badge = $("#engine-badge");
-    badge.textContent = `motor: ${health.engine} · ${health.engineStatus}`;
-    badge.className = `badge ${health.engineStatus === "UP" ? "badge-ok" : "badge-bad"}`;
-  } catch {
-    $("#engine-badge").textContent = "servicio no disponible";
+    const [events, subjects] = await Promise.all([api.audit(), api.listSubjects()]);
+    const names = Object.fromEntries(subjects.map((s) => [s.subjectId, s.displayName]));
+    host.innerHTML = events.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Hora</th><th>Acción</th><th>Resultado</th><th>Persona</th><th>Detalle</th><th>Imagen</th></tr></thead>
+        <tbody>${events.map((e) => auditRow(e, names)).join("")}</tbody></table></div>`
+      : `<div class="table-wrap"><p class="empty">Sin eventos todavía.</p></div>`;
+  } catch (error) {
+    host.innerHTML = errorBox(error);
   }
 }
 
-function selectTab(tab) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== tab));
-  $("#result").hidden = true;
+function auditRow(e, names) {
+  const good = ["OK", "MATCH"].includes(e.outcome);
+  const warn = e.outcome === "INCONCLUSIVE";
+  const detail = e.detail
+    .replace("liveness=PASSED", "prueba de vida superada")
+    .replace("liveness=FAILED", "prueba de vida fallida")
+    .replace("liveness=NOT_PERFORMED", "sin prueba de vida");
+  return `<tr>
+    <td class="mono">${new Date(e.occurredAt).toLocaleTimeString()}</td>
+    <td>${AUDIT_LABELS[e.action] ?? esc(e.action)}</td>
+    <td><span class="badge ${good ? "ok" : warn ? "" : "bad"}">${esc(e.outcome)}</span></td>
+    <td>${esc(e.subjectId ? names[e.subjectId] ?? "(eliminada)" : "—")}</td>
+    <td>${esc(detail)}</td>
+    <td class="mono">${e.imageSha256 ? `${e.imageSha256.slice(0, 10)}…` : ""}</td></tr>`;
 }
 
-$("#btn-camera").addEventListener("click", startCamera);
-$("#btn-capture").addEventListener("click", capture);
-$("#file-input").addEventListener("change", (e) => e.target.files[0] && setImage(e.target.files[0]));
-$("#form-subject").addEventListener("submit", createSubject);
-$("#btn-enroll").addEventListener("click", enroll);
-$("#btn-verify").addEventListener("click", verify);
-$("#btn-identify").addEventListener("click", identify);
-$("#subjects-body").addEventListener("click", (e) => {
-  const button = e.target.closest("button[data-action]");
-  if (button) subjectAction(button.dataset.id, button.dataset.action);
-});
-document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.tab)));
-$("#api-key").addEventListener("change", () => Promise.all([loadSubjects(), loadAudit()]));
+const ROUTES = {
+  inicio: renderHome,
+  "nuevo-cliente": renderEnroll,
+  titular: renderVerify,
+  "quien-es": renderIdentify,
+  "intento-foto": renderSpoof,
+  personas: renderSubjects,
+  auditoria: renderAudit,
+};
 
-loadHealth();
-loadSubjects().then(loadAudit);
+function route() {
+  leaveView();
+  leaveView = () => {};
+  const name = location.hash.slice(1) || "inicio";
+  (ROUTES[name] ?? renderHome)();
+  const current = ["personas", "auditoria"].includes(name) ? name : "inicio";
+  document.querySelectorAll("[data-nav]").forEach((link) => {
+    if (link.dataset.nav === current) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  window.scrollTo({ top: 0 });
+  view.focus({ preventScroll: true });
+}
+
+function setupTechMode() {
+  const toggle = document.querySelector("#tech-toggle");
+  let enabled = false;
+  try {
+    enabled = localStorage.getItem(TECH_STORAGE) === "1";
+  } catch {
+    /* por defecto, modo presentación */
+  }
+  const apply = () => document.body.classList.toggle("tech", toggle.checked);
+  toggle.checked = enabled;
+  apply();
+  toggle.addEventListener("change", () => {
+    apply();
+    try {
+      localStorage.setItem(TECH_STORAGE, toggle.checked ? "1" : "0");
+    } catch {
+      /* preferencia solo para esta sesión */
+    }
+  });
+
+  const keyInput = document.querySelector("#api-key");
+  keyInput.value = getApiKey();
+  keyInput.addEventListener("change", () => setApiKey(keyInput.value.trim()));
+
+  const calls = [];
+  onApiCall((call) => {
+    calls.unshift(call);
+    calls.length = Math.min(calls.length, 8);
+    document.querySelector("#calls-count").textContent = calls.length;
+    document.querySelector("#calls-list").innerHTML = calls
+      .map((c) => `<li><span class="mono">${esc(c.method)} ${esc(c.path)} → ${c.status}</span><pre>${esc(JSON.stringify(c.payload, null, 2))}</pre></li>`)
+      .join("");
+  });
+
+  api
+    .health()
+    .then((health) => {
+      const badge = document.querySelector("#engine-badge");
+      badge.textContent = `motor: ${health.engine} · ${health.engineStatus}`;
+      badge.classList.add(health.engineStatus === "UP" ? "ok" : "bad");
+    })
+    .catch(() => (document.querySelector("#engine-badge").textContent = "servicio caído"));
+}
+
+setupTechMode();
+window.addEventListener("hashchange", route);
+route();
+// Precarga el modelo mientras se presenta la portada, para que la cámara arranque rápido.
+preloadLandmarker().catch(() => {});

@@ -3,119 +3,52 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Facial Identity · Demo</title>
+  <title>Servicio de identificación facial</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Figtree:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>facial-identity-service</h1>
-      <p class="subtitle">Prototipo · consumidor de ejemplo</p>
-    </div>
-    <div class="topbar-right">
-      <span id="engine-badge" class="badge badge-muted">motor: …</span>
-      <label class="api-key">API key
-        <input id="api-key" type="password" value="demo-key" autocomplete="off">
+    <a class="brand" href="#inicio" aria-label="Inicio">
+      <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+        <ellipse cx="20" cy="20" rx="13" ry="16" fill="none" stroke="currentColor" stroke-width="3.2"/>
+        <path d="M13.5 23.5c3.6 3.4 9.4 3.4 13 0" fill="none" stroke="var(--mango)" stroke-width="3.2" stroke-linecap="round"/>
+        <circle cx="15.5" cy="16.5" r="2" fill="currentColor"/>
+        <circle cx="24.5" cy="16.5" r="2" fill="currentColor"/>
+      </svg>
+      <span class="brand-text">Servicio de identificación facial</span>
+    </a>
+    <nav class="topnav" aria-label="Principal">
+      <a href="#inicio" data-nav="inicio">Escenarios</a>
+      <a href="#personas" data-nav="personas" class="tech-only">Personas</a>
+      <a href="#auditoria" data-nav="auditoria" class="tech-only">Auditoría</a>
+      <a href="/docs" target="_blank" rel="noopener" class="tech-only">Swagger ↗</a>
+    </nav>
+    <div class="topbar-tools">
+      <span id="engine-badge" class="badge tech-only">motor…</span>
+      <label class="tech-only key-field" for="api-key">API key
+        <input id="api-key" type="text" autocomplete="off" spellcheck="false">
       </label>
-      <a href="/docs" target="_blank" rel="noopener">Swagger ↗</a>
+      <label class="switch" for="tech-toggle">
+        <input id="tech-toggle" type="checkbox">
+        <span class="switch-track" aria-hidden="true"></span>
+        <span>Modo técnico</span>
+      </label>
     </div>
   </header>
 
-  <main class="layout">
-    <section class="card capture">
-      <h2>1 · Captura</h2>
-      <div class="video-wrap">
-        <video id="video" autoplay playsinline muted></video>
-        <div class="face-guide" aria-hidden="true"></div>
-      </div>
-      <div class="row">
-        <button id="btn-camera" class="secondary">Encender cámara</button>
-        <button id="btn-capture" disabled>Capturar foto</button>
-        <label class="file-btn secondary">Subir archivo
-          <input id="file-input" type="file" accept="image/*" hidden>
-        </label>
-      </div>
-      <div class="snapshot">
-        <img id="snapshot" alt="Foto capturada" hidden>
-        <p id="snapshot-empty" class="muted">Aún no hay foto. Captura una o sube un archivo.</p>
-      </div>
-      <canvas id="canvas" hidden></canvas>
-    </section>
+  <main id="view" class="page" tabindex="-1"></main>
 
-    <section class="card actions">
-      <nav class="tabs" role="tablist">
-        <button role="tab" data-tab="enroll" class="active">Registrar</button>
-        <button role="tab" data-tab="verify">Verificar 1:1</button>
-        <button role="tab" data-tab="identify">Identificar 1:N</button>
-        <button role="tab" data-tab="admin">Administrar</button>
-        <button role="tab" data-tab="audit">Auditoría</button>
-      </nav>
+  <section id="calls" class="calls tech-only" aria-label="Llamadas al servicio">
+    <details>
+      <summary>Llamadas al servicio <span id="calls-count" class="badge">0</span></summary>
+      <ol id="calls-list"></ol>
+    </details>
+  </section>
 
-      <div class="tab-panel" data-panel="enroll">
-        <h2>2 · Registrar rostro</h2>
-        <form id="form-subject" class="stack">
-          <p class="muted">Crea la persona</p>
-          <div class="row">
-            <input name="externalId" placeholder="externalId" required>
-            <input name="displayName" placeholder="Nombre" required>
-            <button type="submit" class="secondary">Crear persona</button>
-          </div>
-        </form>
-        <div class="stack">
-          <label>Persona
-            <select id="enroll-subject" class="subject-select"></select>
-          </label>
-          <button id="btn-enroll">Registrar la foto capturada</button>
-        </div>
-      </div>
-
-      <div class="tab-panel" data-panel="verify" hidden>
-        <h2>2 · Verificar (¿es quien dice ser?)</h2>
-        <div class="stack">
-          <label>Persona que dice ser
-            <select id="verify-subject" class="subject-select"></select>
-          </label>
-          <button id="btn-verify">Verificar la foto capturada</button>
-        </div>
-      </div>
-
-      <div class="tab-panel" data-panel="identify" hidden>
-        <h2>2 · Identificar (¿quién es?)</h2>
-        <p class="muted">Busca el rostro entre todas las personas activas registradas.</p>
-        <button id="btn-identify">Identificar la foto capturada</button>
-      </div>
-
-      <div class="tab-panel" data-panel="admin" hidden>
-        <h2>Personas registradas</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Nombre</th><th>externalId</th><th>Estado</th><th>Rostros</th><th>Fallos</th><th></th></tr></thead>
-            <tbody id="subjects-body"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="tab-panel" data-panel="audit" hidden>
-        <h2>Auditoría</h2>
-        <p class="muted">Cada operación queda registrada con su resultado y el hash SHA-256 de la imagen (la imagen nunca se guarda).</p>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Fecha</th><th>Acción</th><th>Resultado</th><th>Persona</th><th>Detalle</th></tr></thead>
-            <tbody id="audit-body"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <section id="result" class="result" hidden>
-        <div id="result-summary"></div>
-        <details>
-          <summary>Respuesta JSON del servicio</summary>
-          <pre id="result-json"></pre>
-        </details>
-      </section>
-    </section>
-  </main>
-
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
