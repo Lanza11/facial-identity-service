@@ -2,11 +2,23 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Path, Query, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Path,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 
 from facial_identity.api.auth import require_api_key
 from facial_identity.api.openapi import (
     IMAGE_DESCRIPTION,
+    LIVENESS_DESCRIPTION,
     TAG_AUDIT,
     TAG_ENROLLMENT,
     TAG_HEALTH,
@@ -16,6 +28,8 @@ from facial_identity.api.openapi import (
 )
 from facial_identity.api.schemas import (
     AuditEventOut,
+    ConsentCreate,
+    ConsentOut,
     EnrollmentOut,
     HealthOut,
     IdentificationOut,
@@ -25,6 +39,7 @@ from facial_identity.api.schemas import (
 )
 from facial_identity.application.use_cases import FacialIdentityService
 from facial_identity.domain.errors import (
+    ConsentRequiredError,
     EngineUnavailableError,
     InvalidImageError,
     MaxEnrollmentsReachedError,
@@ -36,6 +51,7 @@ from facial_identity.domain.errors import (
     SubjectLockedError,
     SubjectNotFoundError,
 )
+from facial_identity.domain.models import LivenessResult
 
 
 def get_service(request: Request) -> FacialIdentityService:
@@ -58,6 +74,7 @@ def read_image(
 Service = Annotated[FacialIdentityService, Depends(get_service)]
 Image = Annotated[bytes, Depends(read_image)]
 SubjectId = Annotated[str, Path(description="El `subjectId` que devolvió `POST /v1/subjects`.")]
+Liveness = Annotated[LivenessResult | None, Form(description=LIVENESS_DESCRIPTION)]
 
 _IMAGE_ERRORS = (InvalidImageError, NoFaceDetectedError, MultipleFacesDetectedError)
 
@@ -86,7 +103,22 @@ def health(service: Service) -> HealthOut:
     responses=problem_responses(SubjectAlreadyExistsError),
 )
 def create_subject(body: SubjectCreate, service: Service) -> SubjectOut:
-    return SubjectOut.of(service.create_subject(body.external_id, body.display_name), 0)
+    subject = service.create_subject(body.external_id, body.display_name)
+    return SubjectOut.of(service.summarize_subject(subject.id))
+
+
+@router.post(
+    "/subjects/{subject_id}/consents",
+    response_model=ConsentOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=[TAG_SUBJECTS],
+    summary="Registrar la autorización de datos biométricos",
+    description="Guarda que la persona autorizó el tratamiento de sus datos biométricos (Ley 1581 "
+    "de 2012). Es obligatorio antes de registrar su rostro.",
+    responses=problem_responses(SubjectNotFoundError),
+)
+def record_consent(subject_id: SubjectId, body: ConsentCreate, service: Service) -> ConsentOut:
+    return ConsentOut.of(service.record_consent(subject_id, body.text_version, body.channel))
 
 
 @router.get(
@@ -97,7 +129,7 @@ def create_subject(body: SubjectCreate, service: Service) -> SubjectOut:
     responses=problem_responses(),
 )
 def list_subjects(service: Service) -> list[SubjectOut]:
-    return [SubjectOut.of(subject, count) for subject, count in service.list_subjects()]
+    return [SubjectOut.of(summary) for summary in service.list_subjects()]
 
 
 @router.post(
@@ -110,8 +142,8 @@ def list_subjects(service: Service) -> list[SubjectOut]:
     responses=problem_responses(SubjectNotFoundError),
 )
 def deactivate_subject(subject_id: SubjectId, service: Service) -> SubjectOut:
-    subject = service.deactivate_subject(subject_id)
-    return SubjectOut.of(subject, service.count_enrollments(subject.id))
+    service.deactivate_subject(subject_id)
+    return SubjectOut.of(service.summarize_subject(subject_id))
 
 
 @router.post(
@@ -123,8 +155,8 @@ def deactivate_subject(subject_id: SubjectId, service: Service) -> SubjectOut:
     responses=problem_responses(SubjectNotFoundError),
 )
 def reactivate_subject(subject_id: SubjectId, service: Service) -> SubjectOut:
-    subject = service.reactivate_subject(subject_id)
-    return SubjectOut.of(subject, service.count_enrollments(subject.id))
+    service.reactivate_subject(subject_id)
+    return SubjectOut.of(service.summarize_subject(subject_id))
 
 
 @router.delete(
@@ -149,18 +181,22 @@ def delete_subject(subject_id: SubjectId, service: Service) -> Response:
     summary="Registrar un rostro de la persona",
     description="Sube una foto de la persona. El motor detecta el rostro y guarda su *embedding* "
     "(vector numérico) como referencia. Se permiten varias fotos por persona (hasta el máximo "
-    "configurado). Más de una foto ayuda con distintas luces o ángulos.",
+    "configurado). Más de una foto ayuda con distintas luces o ángulos. Requiere la autorización "
+    "previa de la persona (`POST /v1/subjects/{subjectId}/consents`).",
     responses=problem_responses(
         *_IMAGE_ERRORS,
         SubjectNotFoundError,
+        ConsentRequiredError,
         SubjectInactiveError,
         SubjectLockedError,
         MaxEnrollmentsReachedError,
         EngineUnavailableError,
     ),
 )
-def enroll_face(subject_id: SubjectId, image: Image, service: Service) -> EnrollmentOut:
-    return EnrollmentOut.of(service.enroll_face(subject_id, image))
+def enroll_face(
+    subject_id: SubjectId, image: Image, service: Service, liveness: Liveness = None
+) -> EnrollmentOut:
+    return EnrollmentOut.of(service.enroll_face(subject_id, image, liveness))
 
 
 @router.post(
@@ -180,8 +216,10 @@ def enroll_face(subject_id: SubjectId, image: Image, service: Service) -> Enroll
         EngineUnavailableError,
     ),
 )
-def verify_face(subject_id: SubjectId, image: Image, service: Service) -> VerificationOut:
-    return VerificationOut.of(service.verify_face(subject_id, image))
+def verify_face(
+    subject_id: SubjectId, image: Image, service: Service, liveness: Liveness = None
+) -> VerificationOut:
+    return VerificationOut.of(service.verify_face(subject_id, image, liveness))
 
 
 @router.post(
@@ -193,8 +231,8 @@ def verify_face(subject_id: SubjectId, image: Image, service: Service) -> Verifi
     "Devuelve los candidatos que superan el umbral mínimo, ordenados por similitud.",
     responses=problem_responses(*_IMAGE_ERRORS, EngineUnavailableError),
 )
-def identify_face(image: Image, service: Service) -> IdentificationOut:
-    return IdentificationOut.of(service.identify_face(image))
+def identify_face(image: Image, service: Service, liveness: Liveness = None) -> IdentificationOut:
+    return IdentificationOut.of(service.identify_face(image, liveness))
 
 
 @router.get(

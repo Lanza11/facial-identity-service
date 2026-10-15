@@ -42,6 +42,11 @@ SWAGGER_UI_PARAMETERS: dict[str, Any] = {
     "defaultModelsExpandDepth": 0,
 }
 
+LIVENESS_DESCRIPTION = (
+    "Opcional. Resultado de la prueba de vida hecha en el dispositivo (parpadeo y giro de "
+    "cabeza): `PASSED`, `FAILED` o `NOT_PERFORMED`. Se guarda en la auditoría."
+)
+
 IMAGE_DESCRIPTION = (
     "Foto con **un solo rostro**, de frente y bien iluminada. JPEG, PNG o WEBP, máximo 5 MB. "
     "Se envía como `multipart/form-data` en el campo `image`."

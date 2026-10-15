@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from facial_identity.domain.errors import (
+    ConsentRequiredError,
     FacialIdentityError,
     MaxEnrollmentsReachedError,
     NoEnrollmentsError,
@@ -19,13 +20,16 @@ from facial_identity.domain.models import (
     AuditAction,
     AuditEvent,
     Candidate,
+    Consent,
     Decision,
     EngineMatch,
     Enrollment,
     IdentificationResult,
+    LivenessResult,
     ReasonCode,
     Subject,
     SubjectStatus,
+    SubjectSummary,
     VerificationResult,
 )
 from facial_identity.domain.policies import EnrollmentPolicy, LockoutPolicy, MatchPolicy
@@ -86,11 +90,22 @@ class FacialIdentityService:
         self._record(AuditAction.SUBJECT_CREATED, subject.id)
         return subject
 
-    def list_subjects(self) -> list[tuple[Subject, int]]:
-        return [(s, self.count_enrollments(s.id)) for s in self._subjects.list_all()]
+    def list_subjects(self) -> list[SubjectSummary]:
+        return [self._summarize(s) for s in self._subjects.list_all()]
 
-    def count_enrollments(self, subject_id: str) -> int:
-        return len(self._subjects.list_enrollments(subject_id))
+    def summarize_subject(self, subject_id: str) -> SubjectSummary:
+        return self._summarize(self.get_subject(subject_id))
+
+    def record_consent(self, subject_id: str, text_version: str, channel: str) -> Consent:
+        subject = self.get_subject(subject_id)
+        consent = Consent(_new_id(), subject.id, text_version, channel, self._clock.now())
+        self._subjects.add_consent(consent)
+        self._record(
+            AuditAction.CONSENT_GRANTED,
+            subject.id,
+            detail=f"texto={text_version} canal={channel}",
+        )
+        return consent
 
     def get_subject(self, subject_id: str) -> Subject:
         subject = self._subjects.get(subject_id)
@@ -98,27 +113,34 @@ class FacialIdentityService:
             raise SubjectNotFoundError()
         return subject
 
-    def enroll_face(self, subject_id: str, image: bytes) -> Enrollment:
+    def enroll_face(
+        self, subject_id: str, image: bytes, liveness: LivenessResult | None = None
+    ) -> Enrollment:
         image_hash = _sha256(image)
         return self._audited(
             AuditAction.FACE_ENROLLED,
             subject_id,
             image_hash,
             lambda: self._enroll(subject_id, image, image_hash),
+            liveness=liveness,
         )
 
-    def verify_face(self, subject_id: str, image: bytes) -> VerificationResult:
-        image_hash = _sha256(image)
+    def verify_face(
+        self, subject_id: str, image: bytes, liveness: LivenessResult | None = None
+    ) -> VerificationResult:
         return self._audited(
             AuditAction.FACE_VERIFIED,
             subject_id,
-            image_hash,
+            _sha256(image),
             lambda: self._verify(subject_id, image),
             outcome_of=lambda r: r.decision.value,
             detail_of=lambda r: f"score={r.score:.4f}",
+            liveness=liveness,
         )
 
-    def identify_face(self, image: bytes) -> IdentificationResult:
+    def identify_face(
+        self, image: bytes, liveness: LivenessResult | None = None
+    ) -> IdentificationResult:
         return self._audited(
             AuditAction.FACE_IDENTIFIED,
             None,
@@ -126,6 +148,7 @@ class FacialIdentityService:
             lambda: self._identify(image),
             outcome_of=lambda r: r.decision.value,
             detail_of=lambda r: f"candidates={len(r.candidates)}",
+            liveness=liveness,
         )
 
     def deactivate_subject(self, subject_id: str) -> Subject:
@@ -148,6 +171,8 @@ class FacialIdentityService:
 
     def _enroll(self, subject_id: str, image: bytes, image_hash: str) -> Enrollment:
         subject = self._require_usable_subject(subject_id)
+        if self._subjects.latest_consent(subject.id) is None:
+            raise ConsentRequiredError()
         current = len(self._subjects.list_enrollments(subject.id))
         if not self._policies.enrollment.can_enroll(current):
             raise MaxEnrollmentsReachedError()
@@ -193,6 +218,14 @@ class FacialIdentityService:
             subject.id, subject.external_id, subject.display_name, round(match.similarity, 4)
         )
 
+    def _summarize(self, subject: Subject) -> SubjectSummary:
+        consent = self._subjects.latest_consent(subject.id)
+        return SubjectSummary(
+            subject=subject,
+            enrollments=len(self._subjects.list_enrollments(subject.id)),
+            consented_at=consent.granted_at if consent else None,
+        )
+
     def _require_usable_subject(self, subject_id: str) -> Subject:
         subject = self.get_subject(subject_id)
         if not subject.is_active:
@@ -229,17 +262,25 @@ class FacialIdentityService:
         operation: Callable[[], T],
         outcome_of: Callable[[T], str] = lambda _: "OK",
         detail_of: Callable[[T], str] = lambda _: "",
+        liveness: LivenessResult | None = None,
     ) -> T:
+        liveness_detail = f"liveness={liveness.value}" if liveness else ""
         try:
             result = operation()
         except FacialIdentityError as error:
-            self._record(action, subject_id, outcome=error.slug, image_hash=image_hash)
+            self._record(
+                action,
+                subject_id,
+                outcome=error.slug,
+                detail=liveness_detail,
+                image_hash=image_hash,
+            )
             raise
         self._record(
             action,
             subject_id,
             outcome=outcome_of(result),
-            detail=detail_of(result),
+            detail=" ".join(filter(None, [detail_of(result), liveness_detail])),
             image_hash=image_hash,
         )
         return result

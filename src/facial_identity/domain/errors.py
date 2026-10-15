@@ -42,6 +42,12 @@ class MaxEnrollmentsReachedError(FacialIdentityError):
     title = "El sujeto alcanzó el máximo de rostros registrados"
 
 
+class ConsentRequiredError(FacialIdentityError):
+    slug = "CONSENT_REQUIRED"
+    status = 409
+    title = "La persona no ha autorizado el tratamiento de sus datos biométricos"
+
+
 class NoEnrollmentsError(FacialIdentityError):
     slug = "NO_ENROLLMENTS"
     status = 409
