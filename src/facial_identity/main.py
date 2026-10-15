@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import mimetypes
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from facial_identity.adapters.compreface_engine import CompreFaceEngine
@@ -21,6 +23,19 @@ from facial_identity.domain.policies import EnrollmentPolicy, LockoutPolicy, Mat
 from facial_identity.ports import FaceEngine
 
 _DEMO_DIR = Path(__file__).resolve().parents[2] / "demo"
+
+# MediaPipe (demo) carga WASM y módulos ES: algunos sistemas no traen estos tipos registrados.
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("text/javascript", ".mjs")
+
+
+class DemoStaticFiles(StaticFiles):
+    """Archivos de la demo: el navegador revalida cada vez, para no mostrar versiones viejas."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 class SystemClock:
@@ -80,7 +95,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(router)
     if _DEMO_DIR.is_dir():
-        app.mount("/demo", StaticFiles(directory=_DEMO_DIR, html=True), name="demo")
+        app.mount("/demo", DemoStaticFiles(directory=_DEMO_DIR, html=True), name="demo")
 
         @app.get("/", include_in_schema=False)
         def _root() -> RedirectResponse:

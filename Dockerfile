@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir \
 
 COPY src ./src
 COPY demo ./demo
+# MediaPipe para la prueba de vida de la demo: reutiliza demo/vendor si ya está, si no lo descarga.
+COPY scripts/fetch_mediapipe.py ./scripts/
+RUN python scripts/fetch_mediapipe.py
 
 RUN useradd --create-home fis && mkdir -p /data && chown fis /data
 USER fis

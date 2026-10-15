@@ -24,3 +24,6 @@ samples/
 # IDE
 .idea/
 .vscode/
+
+# Librerías descargadas para la demo (scripts/fetch_mediapipe.py)
+demo/vendor/
