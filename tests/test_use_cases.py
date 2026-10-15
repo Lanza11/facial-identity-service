@@ -2,6 +2,7 @@ import pytest
 
 from facial_identity.adapters.fake_engine import MULTIPLE_FACES_MARKER, NO_FACE_MARKER
 from facial_identity.domain.errors import (
+    ConsentRequiredError,
     MaxEnrollmentsReachedError,
     MultipleFacesDetectedError,
     NoEnrollmentsError,
@@ -11,12 +12,18 @@ from facial_identity.domain.errors import (
     SubjectLockedError,
     SubjectNotFoundError,
 )
-from facial_identity.domain.models import AuditAction, Decision, ReasonCode
+from facial_identity.domain.models import AuditAction, Decision, LivenessResult, ReasonCode
 from tests.conftest import FACE_ANA, FACE_ANA_2, FACE_LUIS
 
 
-def _enrolled(service, external_id="CUST-1", name="Ana", face=FACE_ANA):
+def _consented(service, external_id="CUST-1", name="Ana"):
     subject = service.create_subject(external_id, name)
+    service.record_consent(subject.id, "biometria-v1", "sede")
+    return subject
+
+
+def _enrolled(service, external_id="CUST-1", name="Ana", face=FACE_ANA):
+    subject = _consented(service, external_id, name)
     service.enroll_face(subject.id, face)
     return subject
 
@@ -46,7 +53,7 @@ def test_verifica_no_match_con_otra_persona(service):
 
 
 def test_rechaza_registro_sin_rostro_o_con_varios(service):
-    ana = service.create_subject("CUST-1", "Ana")
+    ana = _consented(service)
     with pytest.raises(NoFaceDetectedError):
         service.enroll_face(ana.id, NO_FACE_MARKER)
     with pytest.raises(MultipleFacesDetectedError):
@@ -131,8 +138,34 @@ def test_audita_exitos_y_fallos_sin_guardar_la_imagen(service):
     outcomes = [(e.action, e.outcome) for e in reversed(events)]
     assert outcomes == [
         (AuditAction.SUBJECT_CREATED, "OK"),
+        (AuditAction.CONSENT_GRANTED, "OK"),
         (AuditAction.FACE_ENROLLED, "OK"),
         (AuditAction.FACE_VERIFIED, "NO_MATCH"),
         (AuditAction.FACE_VERIFIED, "NO_FACE"),
     ]
     assert all(len(e.image_sha256) == 64 for e in events if e.image_sha256)
+
+
+def test_no_registra_rostro_sin_consentimiento(service):
+    ana = service.create_subject("CUST-1", "Ana")
+    with pytest.raises(ConsentRequiredError):
+        service.enroll_face(ana.id, FACE_ANA)
+    assert service.summarize_subject(ana.id).consented_at is None
+
+
+def test_el_resumen_incluye_consentimiento_y_rostros(service, clock):
+    ana = _enrolled(service)
+    summary = service.summarize_subject(ana.id)
+    assert summary.consented_at == clock.now()
+    assert summary.enrollments == 1
+
+
+def test_audita_el_resultado_de_la_prueba_de_vida(service):
+    ana = _consented(service)
+    service.enroll_face(ana.id, FACE_ANA, LivenessResult.PASSED)
+    service.verify_face(ana.id, FACE_ANA, LivenessResult.PASSED)
+    with pytest.raises(NoFaceDetectedError):
+        service.verify_face(ana.id, NO_FACE_MARKER, LivenessResult.FAILED)
+
+    details = [e.detail for e in reversed(service.audit_events(ana.id))][-3:]
+    assert details == ["liveness=PASSED", "score=1.0000 liveness=PASSED", "liveness=FAILED"]

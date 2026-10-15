@@ -23,8 +23,18 @@ class ReasonCode(StrEnum):
     NO_CANDIDATES = "NO_CANDIDATES"
 
 
+class LivenessResult(StrEnum):
+    """Resultado de la prueba de vida que hizo el consumidor (p. ej. parpadeo y giro de cabeza
+    en el dispositivo). El servicio solo lo registra en la auditoría."""
+
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    NOT_PERFORMED = "NOT_PERFORMED"
+
+
 class AuditAction(StrEnum):
     SUBJECT_CREATED = "SUBJECT_CREATED"
+    CONSENT_GRANTED = "CONSENT_GRANTED"
     FACE_ENROLLED = "FACE_ENROLLED"
     FACE_VERIFIED = "FACE_VERIFIED"
     FACE_IDENTIFIED = "FACE_IDENTIFIED"
@@ -61,6 +71,24 @@ class Subject:
 
     def with_attempts_reset(self) -> Subject:
         return replace(self, failed_attempts=0, locked_until=None)
+
+
+@dataclass(frozen=True)
+class Consent:
+    """Autorización expresa de la persona para tratar sus datos biométricos (Ley 1581 de 2012)."""
+
+    id: str
+    subject_id: str
+    text_version: str
+    channel: str
+    granted_at: datetime
+
+
+@dataclass(frozen=True)
+class SubjectSummary:
+    subject: Subject
+    enrollments: int
+    consented_at: datetime | None
 
 
 @dataclass(frozen=True)

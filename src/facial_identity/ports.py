@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from facial_identity.domain.models import AuditEvent, EngineMatch, Enrollment, Subject
+from facial_identity.domain.models import AuditEvent, Consent, EngineMatch, Enrollment, Subject
 
 
 class FaceEngine(Protocol):
@@ -42,6 +42,10 @@ class SubjectRepository(Protocol):
     def add_enrollment(self, enrollment: Enrollment) -> None: ...
 
     def list_enrollments(self, subject_id: str) -> list[Enrollment]: ...
+
+    def add_consent(self, consent: Consent) -> None: ...
+
+    def latest_consent(self, subject_id: str) -> Consent | None: ...
 
 
 class AuditLog(Protocol):

@@ -10,6 +10,7 @@ from datetime import datetime
 from facial_identity.domain.models import (
     AuditAction,
     AuditEvent,
+    Consent,
     Enrollment,
     Subject,
     SubjectStatus,
@@ -31,6 +32,13 @@ CREATE TABLE IF NOT EXISTS enrollments (
     engine_face_id TEXT NOT NULL,
     image_sha256 TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS consents (
+    id TEXT PRIMARY KEY,
+    subject_id TEXT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+    text_version TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    granted_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
@@ -122,6 +130,34 @@ class SqliteStore:
             )
             for r in rows
         ]
+
+    def add_consent(self, consent: Consent) -> None:
+        self._execute(
+            "INSERT INTO consents VALUES (?, ?, ?, ?, ?)",
+            (
+                consent.id,
+                consent.subject_id,
+                consent.text_version,
+                consent.channel,
+                consent.granted_at.isoformat(),
+            ),
+        )
+
+    def latest_consent(self, subject_id: str) -> Consent | None:
+        rows = self._query(
+            "SELECT * FROM consents WHERE subject_id = ? ORDER BY granted_at DESC LIMIT 1",
+            (subject_id,),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return Consent(
+            id=row["id"],
+            subject_id=row["subject_id"],
+            text_version=row["text_version"],
+            channel=row["channel"],
+            granted_at=datetime.fromisoformat(row["granted_at"]),
+        )
 
     def record(self, event: AuditEvent) -> None:
         self._execute(

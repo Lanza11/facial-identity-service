@@ -11,12 +11,13 @@ from pydantic.alias_generators import to_camel
 from facial_identity.domain.models import (
     AuditEvent,
     Candidate,
+    Consent,
     Decision,
     Enrollment,
     IdentificationResult,
     ReasonCode,
-    Subject,
     SubjectStatus,
+    SubjectSummary,
     VerificationResult,
 )
 
@@ -56,19 +57,58 @@ class SubjectOut(ApiModel):
     locked_until: datetime | None = Field(
         description="Si tiene valor y es futuro, la persona está bloqueada hasta esa hora (UTC)."
     )
+    consented_at: datetime | None = Field(
+        description="Cuándo autorizó el tratamiento de sus datos biométricos. Sin esta "
+        "autorización no se puede registrar su rostro."
+    )
     created_at: datetime
 
     @classmethod
-    def of(cls, subject: Subject, enrollments: int) -> SubjectOut:
+    def of(cls, summary: SubjectSummary) -> SubjectOut:
+        subject = summary.subject
         return cls(
             subject_id=subject.id,
             external_id=subject.external_id,
             display_name=subject.display_name,
             status=subject.status,
-            enrollments=enrollments,
+            enrollments=summary.enrollments,
             failed_attempts=subject.failed_attempts,
             locked_until=subject.locked_until,
+            consented_at=summary.consented_at,
             created_at=subject.created_at,
+        )
+
+
+class ConsentCreate(ApiModel):
+    text_version: str = Field(
+        min_length=1,
+        max_length=40,
+        description="Versión del texto de autorización que aceptó la persona.",
+        examples=["biometria-v1"],
+    )
+    channel: str = Field(
+        min_length=1,
+        max_length=40,
+        description="Dónde se dio la autorización (sede, app, web…).",
+        examples=["sede"],
+    )
+
+
+class ConsentOut(ApiModel):
+    consent_id: str
+    subject_id: str = Field(examples=[_SUBJECT_ID])
+    text_version: str = Field(examples=["biometria-v1"])
+    channel: str = Field(examples=["sede"])
+    granted_at: datetime
+
+    @classmethod
+    def of(cls, consent: Consent) -> ConsentOut:
+        return cls(
+            consent_id=consent.id,
+            subject_id=consent.subject_id,
+            text_version=consent.text_version,
+            channel=consent.channel,
+            granted_at=consent.granted_at,
         )
 
 
