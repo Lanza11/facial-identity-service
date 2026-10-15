@@ -1,4 +1,4 @@
-// Demo del servicio de identificación facial: cuatro escenarios del negocio + modo técnico.
+// Demo del servicio de identificación facial: tres escenarios del negocio + modo técnico.
 // Solo consume la API pública /v1; toda decisión (umbrales, bloqueos, reglas) es del backend.
 
 import { api, ApiError, getApiKey, onApiCall, setApiKey } from "./api.js";
@@ -92,7 +92,7 @@ function scenarioLayout({ number, title, lead, steps, device }) {
   return `
     <a class="back" href="#inicio">← Volver a los escenarios</a>
     <header class="scenario-head">
-      <div class="eyebrow">Escenario ${number} de 4</div>
+      <div class="eyebrow">Escenario ${number} de 3</div>
       <h1>${title}</h1>
       <p class="lead">${lead}</p>
     </header>
@@ -224,6 +224,15 @@ function verdictMarkup(kind, title, text) {
   return `<div class="verdict ${kind}"><div class="verdict-icon" aria-hidden="true">${icon}</div><h3>${title}</h3><p>${text}</p></div>`;
 }
 
+/** Si la persona no parpadeó o no giró, lo más probable es una foto o una pantalla. */
+function livenessFailureMarkup(reason) {
+  const detail = esc(LIVENESS_MESSAGES[reason] ?? "No completamos la prueba de vida.");
+  if (reason === "NO_BLINK" || reason === "NO_TURN") {
+    return verdictMarkup("bad", "No detectamos a una persona real", `${detail} Por seguridad no damos acceso.`);
+  }
+  return verdictMarkup("warn", "Intentémoslo otra vez", detail);
+}
+
 const toneOf = (decision) => ({ MATCH: "ok", NO_MATCH: "bad", INCONCLUSIVE: "warn" })[decision] ?? "warn";
 
 async function verifiableSubjects() {
@@ -248,22 +257,20 @@ function renderHome() {
     <section class="hero">
       <div class="eyebrow">Demostración</div>
       <h1>Tu rostro confirma que eres tú</h1>
-      <p class="lead">Registramos el rostro del cliente una sola vez. Desde ahí, en segundos y con una foto, sabemos si quien está al otro lado es realmente el titular.</p>
+      <p class="lead">Registramos el rostro del cliente una sola vez. Desde ahí, en segundos y con una foto, sabemos si quien está al otro lado es realmente quien dice ser.</p>
     </section>
     <section class="scenario-grid" aria-label="Escenarios">
       ${scenarioCard("nuevo-cliente", "Nuevo cliente", "Asesor en sede · al firmar el crédito", "El cliente autoriza el uso de su rostro y lo registramos en segundos.")}
-      ${scenarioCard("titular", "¿Es realmente el titular?", "Cliente en la app · antes de pagar", "La app confirma que quien la usa es el dueño del contrato.")}
+      ${scenarioCard("titular", "¿Es realmente quien dice ser?", "Al ingresar al sistema · app o web", "Antes de dar acceso, su rostro confirma que quien entra es esa persona.")}
       ${scenarioCard("quien-es", "¿Quién es este cliente?", "Asesor en sede · cliente sin documento", "Lo reconocemos entre todos los clientes registrados.")}
-      ${scenarioCard("intento-foto", "¿Y si intentan engañarlo con una foto?", "Prueba de seguridad", "Alguien muestra la foto del titular. La prueba de vida lo detiene.", "warning")}
     </section>
     <aside class="privacy-note">
-      <span aria-hidden="true">🔒</span>
       <p><strong>Las fotos no se guardan.</strong> El servicio conserva solo una huella numérica del rostro, y únicamente con la autorización del cliente. El cliente puede pedir que se elimine cuando quiera.</p>
     </aside>`;
 }
 
-function scenarioCard(hash, title, who, text, extra = "") {
-  return `<a class="scenario-card ${extra}" href="#${hash}">
+function scenarioCard(hash, title, who, text) {
+  return `<a class="scenario-card" href="#${hash}">
     <h2>${title}</h2><span class="who">${who}</span><p>${text}</p><span class="go">Empezar →</span></a>`;
 }
 
@@ -380,16 +387,16 @@ function renderEnroll() {
 
 function phoneMarkup(content) {
   return `<div class="phone"><div class="phone-screen">
-      <div class="app-bar">${brandMark}<span>Tu crédito</span></div>
-      <div class="app-body" id="app-body">${content}</div>
+      <div class="app-bar">${brandMark}<span>Ingreso</span></div>
+      <div class="app-body center" id="app-body">${content}</div>
     </div></div>`;
 }
 
 function appHome(subject) {
   return `
     <div class="greeting">Hola, ${esc(firstName(subject.displayName))}</div>
-    <div class="app-card"><small>Tu próxima cuota (ejemplo)</small><span class="amount">$ 285.000</span><small>Vence el 20 de octubre</small></div>
-    <button class="btn mango" id="pay">Pagar cuota</button>`;
+    <div class="app-card"><small>Para ingresar al sistema</small><span>Confirma que eres tú con tu rostro. Sin contraseñas.</span></div>
+    <button class="btn mango" id="login">Ingresar con mi rostro</button>`;
 }
 
 async function renderPhoneScenario(config) {
@@ -422,7 +429,7 @@ async function renderPhoneScenario(config) {
     leaveView();
     setNarration(0);
     view.querySelector("#phone-host").innerHTML = phoneMarkup(appHome(subject));
-    view.querySelector("#pay").addEventListener("click", () => config.onPay(subject, body(), () => showAppHome(subject)));
+    view.querySelector("#login").addEventListener("click", () => config.onStart(subject, body(), () => showAppHome(subject)));
   };
   const body = () => view.querySelector("#app-body");
   select.addEventListener("change", start);
@@ -432,28 +439,28 @@ async function renderPhoneScenario(config) {
 function renderVerify() {
   renderPhoneScenario({
     number: 2,
-    title: "¿Es realmente el titular?",
-    lead: "Antes de pagar o al cambiar de celular, la app confirma que quien la usa es el dueño del contrato.",
-    whoLabel: "Cliente que abre la app:",
-    caption: "Simulación de la app del cliente.",
+    title: "¿Es realmente quien dice ser?",
+    lead: "Al ingresar al sistema, el rostro confirma que quien entra es realmente esa persona. Sirve igual para la app o para el web administrativo.",
+    whoLabel: "Persona que intenta ingresar:",
+    caption: "Simulación de la pantalla de ingreso.",
     steps: [
-      ["El cliente abre la app", "Va a pagar su cuota."],
-      ["La app pide confirmar su identidad", "Una sola foto, sin contraseñas."],
-      ["Prueba de vida", "Parpadea y gira la cabeza frente al celular."],
-      ["Comparación", "Se compara con el rostro que registró al firmar."],
+      ["La persona quiere ingresar", "Abre el sistema y elige entrar con su rostro."],
+      ["El sistema pide confirmar su identidad", "Una sola foto, sin contraseñas."],
+      ["Prueba de vida", "Parpadea y gira la cabeza: una foto no puede hacerlo."],
+      ["Comparación", "Se compara con el rostro que registró."],
     ],
-    onPay: (subject, body, restart) => verifyFlow(subject, body, restart),
+    onStart: (subject, body, restart) => verifyFlow(subject, body, restart),
   });
 }
 
 async function verifyFlow(subject, body, restart) {
   setNarration(1);
   body.classList.remove("center");
-  body.innerHTML = `<div class="greeting" style="font-size:1.25rem">Antes de pagar, confirma que eres tú</div><div id="cam-host"></div>`;
+  body.innerHTML = `<div class="greeting" style="font-size:1.25rem">Mira a la cámara para ingresar</div><div id="cam-host"></div>`;
   let capture;
   try {
     setNarration(2);
-    capture = await captureWithLiveness(body.querySelector("#cam-host"));
+    capture = await captureWithLiveness(body.querySelector("#cam-host"), { timeoutMs: 20000 });
   } catch (error) {
     body.innerHTML = `${errorBox(error)}<button class="btn" id="again">Volver</button>`;
     body.querySelector("#again").addEventListener("click", restart);
@@ -461,7 +468,7 @@ async function verifyFlow(subject, body, restart) {
   }
   body.classList.add("center");
   if (!capture.passed) {
-    body.innerHTML = `<div class="result">${verdictMarkup("warn", "Intentémoslo otra vez", esc(LIVENESS_MESSAGES[capture.reason] ?? "No completamos la prueba de vida."))}
+    body.innerHTML = `<div class="result">${livenessFailureMarkup(capture.reason)}
       <button class="btn" id="again">Intentar de nuevo</button></div>`;
     body.querySelector("#again").addEventListener("click", () => verifyFlow(subject, body, restart));
     return;
@@ -472,8 +479,8 @@ async function verifyFlow(subject, body, restart) {
     const result = await api.verify(subject.subjectId, capture.blob, capture.liveness);
     const name = esc(firstName(subject.displayName));
     const copy = {
-      MATCH: [`¡Eres tú, ${name}!`, "Puedes continuar con tu pago."],
-      NO_MATCH: [`No pudimos confirmar que eres ${name}`, "Por seguridad no seguimos con el pago."],
+      MATCH: [`¡Eres tú, ${name}!`, "Acceso concedido."],
+      NO_MATCH: [`No pudimos confirmar que eres ${name}`, "Por seguridad no damos acceso."],
       INCONCLUSIVE: ["No estamos seguros", "Probemos otra vez, con mejor luz y mirando de frente."],
     }[result.decision];
     const tone = toneOf(result.decision);
@@ -481,7 +488,7 @@ async function verifyFlow(subject, body, restart) {
     body.innerHTML = `<div class="result">
       ${compareMarkup(getPhoto(subject.subjectId), capture.thumbnail, result.score, tone)}
       ${verdictMarkup(tone, copy[0], copy[1])}
-      <div class="actions">${result.decision === "MATCH" ? `<button class="btn" id="again">Continuar</button>` : `<button class="btn" id="retry">Intentar de nuevo</button>`}</div>
+      <div class="actions">${result.decision === "MATCH" ? `<button class="btn" id="again">Entrar</button>` : `<button class="btn" id="retry">Intentar de nuevo</button>`}</div>
     </div>`;
     body.querySelector("#again")?.addEventListener("click", restart);
     body.querySelector("#retry")?.addEventListener("click", () => verifyFlow(subject, body, restart));
@@ -489,64 +496,6 @@ async function verifyFlow(subject, body, restart) {
     body.innerHTML = `${errorBox(error)}<button class="btn" id="again">Volver</button>`;
     body.querySelector("#again").addEventListener("click", restart);
   }
-}
-
-function renderSpoof() {
-  renderPhoneScenario({
-    number: 4,
-    title: "¿Y si intentan engañarlo con una foto?",
-    lead: "Alguien consigue una foto del titular (impresa o en otro celular) e intenta hacerse pasar por esa persona.",
-    whoLabel: "Cliente al que intentan suplantar:",
-    caption: "Muestra a la cámara una foto del cliente, impresa o en otra pantalla.",
-    steps: [
-      ["Alguien tiene una foto del titular", "Impresa o en la pantalla de otro celular."],
-      ["Intenta confirmar con esa foto", "La pone frente a la cámara para pagar."],
-      ["La prueba de vida pide parpadear y girar", "Una foto no puede hacerlo."],
-      ["El intento se bloquea", "Y queda registrado en la auditoría."],
-    ],
-    onPay: (subject, body, restart) => spoofFlow(subject, body, restart),
-  });
-}
-
-async function spoofFlow(subject, body, restart) {
-  setNarration(1);
-  body.classList.remove("center");
-  body.innerHTML = `<div class="greeting" style="font-size:1.25rem">Antes de pagar, confirma que eres tú</div><div id="cam-host"></div>`;
-  let capture;
-  try {
-    setNarration(2);
-    capture = await captureWithLiveness(body.querySelector("#cam-host"), { timeoutMs: 12000 });
-  } catch (error) {
-    body.innerHTML = `${errorBox(error)}<button class="btn" id="again">Volver</button>`;
-    body.querySelector("#again").addEventListener("click", restart);
-    return;
-  }
-  body.classList.add("center");
-  if (capture.passed) {
-    body.innerHTML = `<div class="result">${verdictMarkup("ok", "Aquí hay una persona real", "Superó la prueba de vida. Para este escenario muestra una foto impresa o en otra pantalla.")}
-      <button class="btn" id="again">Intentar con una foto</button></div>`;
-    body.querySelector("#again").addEventListener("click", () => spoofFlow(subject, body, restart));
-    return;
-  }
-  setNarration(3);
-  body.innerHTML = `<div class="result">
-      ${verdictMarkup("bad", "No detectamos a una persona real", `${esc(LIVENESS_MESSAGES[capture.reason] ?? "")} Por seguridad no seguimos con el pago.`)}
-      <div class="callout" id="without"><strong>¿Y sin prueba de vida?</strong><span>Consultando qué habría respondido el reconocimiento…</span></div>
-      <button class="btn ghost" id="again">Volver a intentar</button>
-    </div>`;
-  body.querySelector("#again").addEventListener("click", () => spoofFlow(subject, body, restart));
-  const without = body.querySelector("#without");
-  try {
-    const result = await api.identify(capture.blob, capture.liveness);
-    const best = result.candidates[0];
-    without.classList.add("bad");
-    without.innerHTML = best
-      ? `<strong>Sin prueba de vida, la foto habría pasado</strong><span>El reconocimiento por sí solo habría dicho que es ${esc(best.displayName)} (${percent(best.score)}% de similitud). Por eso la prueba de vida es indispensable.</span>`
-      : `<strong>Tampoco habría coincidido</strong><span>Esta vez el reconocimiento no encontró a nadie parecido, pero con una foto nítida del titular sí podría.</span>`;
-  } catch {
-    without.innerHTML = `<strong>¿Y sin prueba de vida?</strong><span>La foto no tenía un rostro claro para compararlo.</span>`;
-  }
-  setNarration(4);
 }
 
 function renderIdentify() {
@@ -711,7 +660,6 @@ const ROUTES = {
   "nuevo-cliente": renderEnroll,
   titular: renderVerify,
   "quien-es": renderIdentify,
-  "intento-foto": renderSpoof,
   personas: renderSubjects,
   auditoria: renderAudit,
 };

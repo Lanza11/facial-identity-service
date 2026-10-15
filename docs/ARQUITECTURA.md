@@ -205,7 +205,7 @@ Son archivos estáticos, sin frameworks ni compilación, servidos por el propio 
 |---|---|
 | [index.html](../demo/index.html) | Barra superior (marca, navegación, interruptor *Modo técnico*) y el contenedor donde se pinta cada vista |
 | [styles.css](../demo/styles.css) | Identidad "Mira": tokens de color y tipografía (Fredoka + Figtree), modo oscuro, cámara, teléfono, resultados |
-| [app.js](../demo/app.js) | Enrutador por `#hash`, los cuatro escenarios, las vistas técnicas y el panel de llamadas |
+| [app.js](../demo/app.js) | Enrutador por `#hash`, los tres escenarios, las vistas técnicas y el panel de llamadas |
 | [liveness.js](../demo/liveness.js) | Cámara + captura guiada + prueba de vida con MediaPipe |
 | [api.js](../demo/api.js) | Cliente de la API `/v1` (lo mismo que haría la app móvil) |
 | [photos.js](../demo/photos.js) | Miniaturas para la comparación lado a lado, solo en el `localStorage` de este navegador |
@@ -218,9 +218,8 @@ Cada escenario es una función `render…()` que pinta dos columnas: **"Qué est
 | Ruta | Escenario | Dispositivo | Llamadas a la API |
 |---|---|---|---|
 | `#nuevo-cliente` | Nuevo cliente | Pantalla del asesor | `POST /subjects` → `POST /consents` → `POST /enrollments` |
-| `#titular` | ¿Es realmente el titular? | Teléfono (app del cliente) | `POST /verifications` |
+| `#titular` | ¿Es realmente quien dice ser? (ingreso al sistema) | Teléfono (pantalla de ingreso) | `POST /verifications` |
 | `#quien-es` | ¿Quién es este cliente? | Pantalla del asesor | `POST /identifications` |
-| `#intento-foto` | ¿Y si intentan engañarlo con una foto? | Teléfono | Ninguna mientras no pase la prueba de vida. Al fallar, `POST /identifications` con `liveness=FAILED` solo para mostrar qué habría respondido el reconocimiento sin ella |
 | `#personas`, `#auditoria` | Vistas del modo técnico | — | `GET /subjects`, `deactivate`/`reactivate`/`DELETE`, `GET /audit` |
 
 El modo técnico es una clase `tech` en `<body>`: todo lo marcado `.tech-only` (Swagger, API key, motor, métricas de la cámara, subir foto, panel "Llamadas al servicio") solo se ve con ella. La preferencia se recuerda en `localStorage`.
@@ -248,7 +247,7 @@ stateDiagram-v2
 | Giro | Posición de la punta de la nariz (punto 1) entre los dos lados de la cara (puntos 234 y 454) |
 | Luz | Brillo medio de una miniatura de 32×24 del video |
 
-Los umbrales están al inicio de `liveness.js` (`BLINK_CLOSED`, `TURN_THRESHOLD`, `MIN_FACE_WIDTH`…). En modo técnico se ven los valores en vivo sobre la cámara, para calibrarlos. El tiempo límite es de 30 s en los escenarios normales y de 12 s en el de la foto.
+Los umbrales están al inicio de `liveness.js` (`BLINK_CLOSED`, `TURN_THRESHOLD`, `MIN_FACE_WIDTH`…). En modo técnico se ven los valores en vivo sobre la cámara, para calibrarlos. El tiempo límite es de 30 s en el registro y la identificación, y de 20 s en el ingreso. Si la persona no parpadea o no gira (lo típico de una foto o una pantalla), la demo responde "No detectamos a una persona real" y no llama al servicio.
 
 **Límite:** es una prueba de vida *activa* en el cliente. Frena fotos impresas y pantallas, pero no videos grabados que imiten los gestos ni deepfakes inyectados, y al correr en el dispositivo podría manipularse. En producción debe complementarse con una verificación del lado del servidor. El servicio ya recibe y audita el resultado (`liveness`), pero hoy no lo exige.
 

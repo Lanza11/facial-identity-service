@@ -9,7 +9,7 @@ Por debajo usa un motor de reconocimiento intercambiable; hoy es [CompreFace](ht
 
 > **Estado:** prototipo de investigación de viabilidad. No está pensado para producción: la prueba de vida corre solo en el navegador de la demo, la autenticación es simple y no hay despliegue en nube. Ver [docs/ANALISIS.md](docs/ANALISIS.md).
 
-La demo (`/demo`) cuenta cuatro escenarios del negocio con identidad visual propia, captura guiada y **prueba de vida** (parpadeo y giro de cabeza) hecha con [MediaPipe Face Landmarker](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker/web_js) de Google. Lo técnico (Swagger, personas, auditoría, llamadas a la API) aparece al activar el interruptor **Modo técnico**.
+La demo (`/demo`) cuenta tres escenarios del negocio con identidad visual propia, captura guiada y **prueba de vida** (parpadeo y giro de cabeza) hecha con [MediaPipe Face Landmarker](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker/web_js) de Google. Lo técnico (Swagger, personas, auditoría, llamadas a la API) aparece al activar el interruptor **Modo técnico**.
 
 ## Arquitectura
 
@@ -51,7 +51,7 @@ La imagen de la fachada descarga MediaPipe (~40 MB) al construirse. Para ejecuta
 
 | URL | Qué es |
 |---|---|
-| <http://localhost:8080/demo/> | Demo con los cuatro escenarios |
+| <http://localhost:8080/demo/> | Demo con los tres escenarios |
 | <http://localhost:8080/docs> | Swagger / OpenAPI del servicio |
 | <http://localhost:8080/health> | Salud del servicio y del motor |
 | <http://localhost:8000> | UI de CompreFace (`demo@fis.local` / `Demo12345!`) |

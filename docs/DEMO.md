@@ -1,7 +1,7 @@
 # Guion de la demo
 
 Hay dos públicos y por eso dos partes:
-- **Parte 1, para gerencia** (10 minutos): cuatro escenarios del negocio, sin nada técnico a la vista.
+- **Parte 1, para gerencia** (10 minutos): tres escenarios del negocio, sin nada técnico a la vista.
 - **Parte 2, para desarrolladores** (opcional, 5–10 minutos): se activa el *Modo técnico*.
 
 Todo corre en local.
@@ -21,7 +21,7 @@ El mismo día de la demo:
 - <http://localhost:8080/health> debe responder `{"status":"UP","engine":"compreface","engineStatus":"UP"}`.
 - Abre <http://localhost:8080/demo/> en el navegador de la presentación y **autoriza la cámara** una vez, antes de empezar.
 - Deja el interruptor **Modo técnico apagado**.
-- Ten a mano **una foto impresa o en otro celular** de la persona que vas a registrar. Es para el escenario 4.
+- Opcional: ten a mano **una foto impresa o en otro celular** de la persona registrada, para mostrar que una foto no logra ingresar.
 - Busca un lugar con buena luz de frente. Evita tener una ventana detrás.
 - Ensaya una vez la prueba de vida: parpadear y girar la cabeza hacia el lado que pida, con un movimiento claro.
 
@@ -36,16 +36,13 @@ La columna **"Qué está pasando"** de cada escenario ya narra cada paso; puedes
    - Crea a un compañero ("Ana Pérez", `CL-1001`).
    - Muestra el paso de **autorización**: sin ella el sistema no deja registrar el rostro (Ley 1581).
    - En la cámara, la guía dice qué hacer: centrarse, parpadear, girar la cabeza y volver al frente. La foto se toma sola.
-3. **¿Es realmente el titular?**
-   - En el celular simulado, Ana va a **pagar su cuota**. Antes, la app le pide confirmar que es ella.
-   - Resultado: su foto registrada al lado de la de ahora, con el porcentaje de similitud y "¡Eres tú, Ana!".
-   - Repite con **otra persona** frente a la cámara: "No pudimos confirmar que eres Ana", y el pago no sigue.
+3. **¿Es realmente quien dice ser?**
+   - En la pantalla de ingreso (sirve igual para la app de clientes o para el web administrativo), Ana pulsa *Ingresar con mi rostro*.
+   - Resultado: su foto registrada al lado de la de ahora, con el porcentaje de similitud, "¡Eres tú, Ana!" y "Acceso concedido".
+   - Repite con **otra persona** frente a la cámara: "No pudimos confirmar que eres Ana" y no hay acceso.
+   - Opcional: pon **la foto de Ana** (impresa o en otro celular) frente a la cámara. No parpadea ni gira, así que la respuesta es "No detectamos a una persona real".
 4. **¿Quién es este cliente?** Llega alguien sin documento; el asesor pulsa *Empezar* y el sistema lo reconoce entre todos los clientes. Una persona no registrada da "No encontramos a esta persona".
-5. **¿Y si intentan engañarlo con una foto?** (cierre)
-   - Elige a Ana y pulsa *Pagar cuota*. Pon **la foto de Ana** frente a la cámara.
-   - La foto no parpadea, así que tras unos segundos aparece **"No detectamos a una persona real"**.
-   - Justo debajo: *"Sin prueba de vida, la foto habría pasado: el reconocimiento por sí solo habría dicho que es Ana (≈99%)"*. Es el argumento de por qué la prueba de vida es indispensable.
-6. **Cierre.** Es un módulo interno e independiente: puede usarlo la app de clientes, el web administrativo o ambos.
+5. **Cierre.** Es un módulo interno e independiente: puede usarlo la app de clientes, el web administrativo o ambos.
 
 ## Parte 2: modo técnico (desarrolladores)
 

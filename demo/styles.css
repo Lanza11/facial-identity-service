@@ -122,8 +122,8 @@ body:not(.tech) .tech-only { display: none !important; }
 /* Inicio */
 .hero { display: grid; gap: 14px; padding-top: 8px; }
 .hero h1 { max-width: 20ch; }
-.scenario-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; counter-reset: s; }
-@media (max-width: 760px) { .scenario-grid { grid-template-columns: 1fr; } }
+.scenario-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; counter-reset: s; }
+@media (max-width: 900px) { .scenario-grid { grid-template-columns: 1fr; } }
 .scenario-card {
   counter-increment: s;
   display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-items: start;
@@ -136,11 +136,10 @@ body:not(.tech) .tech-only { display: none !important; }
   width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
   font: 700 1.2rem var(--font-display); background: var(--brand-soft); color: var(--brand);
 }
-.scenario-card.warning::before { background: var(--mango-soft); color: var(--mango-ink); }
 .scenario-card .who { font-size: .85rem; font-weight: 600; color: var(--muted); }
 .scenario-card p { color: var(--muted); }
 .scenario-card .go { grid-column: 2; margin-top: 8px; font-weight: 700; color: var(--brand); }
-.privacy-note { display: flex; gap: 12px; align-items: flex-start; padding: 16px 20px; border-radius: var(--radius); background: var(--surface-2); color: var(--muted); max-width: 80ch; }
+.privacy-note { padding: 16px 20px; border-radius: var(--radius); background: var(--surface-2); color: var(--muted); max-width: 80ch; }
 .privacy-note strong { color: var(--ink); }
 
 /* Escenario: narración + dispositivo */
@@ -192,7 +191,6 @@ body:not(.tech) .tech-only { display: none !important; }
 .greeting { font: 600 1.55rem/1.2 var(--font-display); }
 .app-card { background: var(--surface); border-radius: 18px; padding: 16px; display: grid; gap: 4px; border: 1px solid var(--line); text-align: left; width: 100%; }
 .app-card small { color: var(--muted); font-weight: 600; }
-.app-card .amount { font: 600 1.5rem var(--font-display); font-variant-numeric: tabular-nums; }
 .device-caption { font-size: .88rem; color: var(--muted); text-align: center; max-width: 40ch; }
 .who-select { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
 .who-select select { font: 600 .95rem var(--font-body); padding: 8px 12px; border-radius: 999px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); }
