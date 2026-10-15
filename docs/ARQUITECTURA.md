@@ -111,7 +111,7 @@ sequenceDiagram
     participant E as adapters/compreface_engine.py
     participant C as CompreFace
 
-    B->>B: cámara → canvas → Blob JPEG → FormData("image")
+    B->>B: prueba de vida (MediaPipe) → canvas → Blob JPEG → FormData("image", "liveness")
     B->>R: POST /v1/subjects/{id}/verifications (x-api-key)
     R->>R: require_api_key ✔ · read_image: ¿es imagen? ¿≤ 5 MB?
     R->>U: verify_face(subject_id, bytes)
@@ -132,7 +132,7 @@ sequenceDiagram
 
 Qué pasa en cada paso:
 
-1. **Frontend** ([demo/app.js](../demo/app.js)): `capture()` dibuja el fotograma del `<video>` en un `<canvas>` y lo convierte en JPEG con `canvas.toBlob(…, "image/jpeg", 0.9)`. `imageForm()` mete ese Blob en un `FormData` con el nombre `image`, y `api()` lo envía con `fetch` añadiendo el header `x-api-key`. No se fija `Content-Type`: el navegador lo pone solo, con el `boundary`.
+1. **Frontend** ([demo/liveness.js](../demo/liveness.js), [demo/api.js](../demo/api.js)): cuando la prueba de vida termina, `FaceCheck.capture()` recorta del `<video>` el área que ve la persona y la convierte en JPEG con `canvas.toBlob(…, "image/jpeg", 0.92)`. `imageForm()` mete ese Blob en un `FormData` con el nombre `image`, más el campo `liveness` con el resultado, y `request()` lo envía con `fetch` añadiendo el header `x-api-key`. No se fija `Content-Type`: el navegador lo pone solo, con el `boundary`.
 2. **API** ([routes.py](../src/facial_identity/api/routes.py)): FastAPI resuelve las dependencias antes de entrar al endpoint:
    - `require_api_key` valida la key.
    - `read_image` recibe el `UploadFile` y valida que sea `image/*`, que no esté vacía y que no pase de 5 MB. Devuelve los `bytes`.
@@ -151,7 +151,7 @@ Qué pasa en cada paso:
 
 ### 4.3 Registrar e identificar
 
-- **Registrar** (`_enroll`) sigue el mismo camino, con dos diferencias. Antes de guardar comprueba `EnrollmentPolicy` (máximo de rostros). Y el adaptador primero llama a `/recognize` para **asegurarse de que hay exactamente un rostro**, así no depende de cómo trate CompreFace una foto grupal. Después llama a `POST /recognition/faces?subject=<UUID>`, que devuelve un `image_id`. Ese id se guarda en SQLite (`enrollments.engine_face_id`) y es lo que se usa después para verificar.
+- **Registrar** (`_enroll`) sigue el mismo camino, con estas diferencias. Antes de guardar exige que la persona haya dado su **autorización** (`POST /v1/subjects/{id}/consents`; si no, `CONSENT_REQUIRED`) y comprueba `EnrollmentPolicy` (máximo de rostros). Y el adaptador primero llama a `/recognize` para **asegurarse de que hay exactamente un rostro**, así no depende de cómo trate CompreFace una foto grupal. Después llama a `POST /recognition/faces?subject=<UUID>`, que devuelve un `image_id`. Ese id se guarda en SQLite (`enrollments.engine_face_id`) y es lo que se usa después para verificar.
 - **Identificar** (`_identify`): el adaptador llama a `/recognize?prediction_count=3`. CompreFace devuelve los UUIDs más parecidos y el servicio los traduce a personas, **descarta las inactivas y las que no superan el umbral mínimo**, y ordena el resultado.
 
 ## 5. Backend: capas y responsabilidades
@@ -191,6 +191,7 @@ Por eso cambiar de motor es escribir una clase nueva que cumpla `FaceEngine` (5 
 | Tabla | Contenido |
 |---|---|
 | `subjects` | id (UUID), external_id, nombre, estado, intentos fallidos, bloqueado hasta |
+| `consents` | id, persona, versión del texto aceptado, canal (sede, app…), fecha |
 | `enrollments` | id, persona, `engine_face_id` (id del rostro en el motor), hash de la foto |
 | `audit_events` | acción, fecha, persona, resultado, detalle, hash de la foto |
 
@@ -198,24 +199,62 @@ CompreFace guarda por su lado, en su Postgres, el embedding de cada rostro asoci
 
 ## 6. Frontend: la página de demo
 
-Son tres archivos estáticos, sin frameworks ni compilación, servidos por el propio servicio en `/demo` ([main.py](../src/facial_identity/main.py), `StaticFiles`):
+Son archivos estáticos, sin frameworks ni compilación, servidos por el propio servicio en `/demo` ([main.py](../src/facial_identity/main.py), `DemoStaticFiles`, que obliga al navegador a revalidar para no mostrar versiones viejas). Usan módulos ES nativos (`<script type="module">`).
 
 | Archivo | Rol |
 |---|---|
-| [index.html](../demo/index.html) | Estructura: panel de captura (izquierda) y pestañas de acciones (derecha) |
-| [styles.css](../demo/styles.css) | Estilos con variables CSS y modo oscuro automático |
-| [app.js](../demo/app.js) | Toda la lógica |
+| [index.html](../demo/index.html) | Barra superior (marca, navegación, interruptor *Modo técnico*) y el contenedor donde se pinta cada vista |
+| [styles.css](../demo/styles.css) | Identidad "Mira": tokens de color y tipografía (Fredoka + Figtree), modo oscuro, cámara, teléfono, resultados |
+| [app.js](../demo/app.js) | Enrutador por `#hash`, los cuatro escenarios, las vistas técnicas y el panel de llamadas |
+| [liveness.js](../demo/liveness.js) | Cámara + captura guiada + prueba de vida con MediaPipe |
+| [api.js](../demo/api.js) | Cliente de la API `/v1` (lo mismo que haría la app móvil) |
+| [photos.js](../demo/photos.js) | Miniaturas para la comparación lado a lado, solo en el `localStorage` de este navegador |
+| `vendor/mediapipe/` | Librería, WASM y modelo de MediaPipe, descargados por `scripts/fetch_mediapipe.py` (fuera de git) |
 
-**Piezas de `app.js`:**
+### 6.1 Escenarios (`app.js`)
 
-- `state`: guarda la foto actual (`state.image`, un `Blob`) y la lista de personas.
-- **Cámara**: `startCamera()` pide permiso con `navigator.mediaDevices.getUserMedia`. Los navegadores solo lo permiten en `localhost` o HTTPS. `capture()` hace canvas → JPEG. El `<video>` se ve en espejo por CSS (`scaleX(-1)`), pero la foto se guarda sin espejar. Subir un archivo (`#file-input`) llega al mismo `setImage()`, así que el resto del flujo no distingue entre cámara y archivo.
-- `api(path, options)`: envoltorio de `fetch` que **añade siempre `x-api-key`** (leída del campo de la cabecera) y, si la respuesta no es 2xx, lanza el problem+json para que `showError` lo pinte.
-- **Acciones** `enroll`, `verify`, `identify`, `createSubject`, `subjectAction`: cada una arma la petición, la envía y llama a `showResult` con un resumen legible y el JSON completo (desplegable "Respuesta JSON del servicio").
-- `run(action)`: ejecuta la acción, captura errores y **refresca personas y auditoría**, para que cada operación se vea al momento en las pestañas *Administrar* y *Auditoría*.
-- `loadHealth()`: consulta `/health` (sin key) y pinta el badge "motor: compreface · UP".
+Cada escenario es una función `render…()` que pinta dos columnas: **"Qué está pasando"** (la narración para quien mira la demo, con el paso actual resaltado vía `setNarration(i)`) y el **dispositivo**.
 
-**Importante:** la página es solo un **consumidor de ejemplo**. No tiene lógica de negocio. Todo lo que decide (umbrales, bloqueos, inactivos) lo decide el backend. La app Flutter haría exactamente las mismas llamadas.
+| Ruta | Escenario | Dispositivo | Llamadas a la API |
+|---|---|---|---|
+| `#nuevo-cliente` | Nuevo cliente | Pantalla del asesor | `POST /subjects` → `POST /consents` → `POST /enrollments` |
+| `#titular` | ¿Es realmente el titular? | Teléfono (app del cliente) | `POST /verifications` |
+| `#quien-es` | ¿Quién es este cliente? | Pantalla del asesor | `POST /identifications` |
+| `#intento-foto` | ¿Y si intentan engañarlo con una foto? | Teléfono | Ninguna mientras no pase la prueba de vida. Al fallar, `POST /identifications` con `liveness=FAILED` solo para mostrar qué habría respondido el reconocimiento sin ella |
+| `#personas`, `#auditoria` | Vistas del modo técnico | — | `GET /subjects`, `deactivate`/`reactivate`/`DELETE`, `GET /audit` |
+
+El modo técnico es una clase `tech` en `<body>`: todo lo marcado `.tech-only` (Swagger, API key, motor, métricas de la cámara, subir foto, panel "Llamadas al servicio") solo se ve con ella. La preferencia se recuerda en `localStorage`.
+
+### 6.2 Prueba de vida (`liveness.js`)
+
+Usa **MediaPipe Face Landmarker** (`@mediapipe/tasks-vision` 1.0.1, Apache 2.0), que corre en el navegador: el video nunca sale del equipo. En cada fotograma (`detectForVideo`) entrega 478 puntos del rostro y 52 medidas de expresión (*blendshapes*). Con eso, `FaceCheck.run()` recorre esta máquina de estados:
+
+```mermaid
+stateDiagram-v2
+    [*] --> position
+    position --> blink: un solo rostro, centrado en el óvalo, tamaño correcto, de frente, buena luz (600 ms)
+    blink --> turn: eyeBlinkLeft/Right > 0.5 y luego < 0.25
+    turn --> front: giro hacia el lado pedido (izquierda o derecha, al azar)
+    front --> [*]: de nuevo de frente → captura la foto
+    position --> fallo: se acaba el tiempo
+    blink --> fallo
+    turn --> fallo
+```
+
+| Comprobación | Cómo se mide |
+|---|---|
+| Encuadre | Caja de los 478 puntos, convertida a coordenadas de lo que ve la persona (recorte de `object-fit: cover` y espejo) |
+| Parpadeo | Blendshapes `eyeBlinkLeft` y `eyeBlinkRight` (se exige ambos ojos) |
+| Giro | Posición de la punta de la nariz (punto 1) entre los dos lados de la cara (puntos 234 y 454) |
+| Luz | Brillo medio de una miniatura de 32×24 del video |
+
+Los umbrales están al inicio de `liveness.js` (`BLINK_CLOSED`, `TURN_THRESHOLD`, `MIN_FACE_WIDTH`…). En modo técnico se ven los valores en vivo sobre la cámara, para calibrarlos. El tiempo límite es de 30 s en los escenarios normales y de 12 s en el de la foto.
+
+**Límite:** es una prueba de vida *activa* en el cliente. Frena fotos impresas y pantallas, pero no videos grabados que imiten los gestos ni deepfakes inyectados, y al correr en el dispositivo podría manipularse. En producción debe complementarse con una verificación del lado del servidor. El servicio ya recibe y audita el resultado (`liveness`), pero hoy no lo exige.
+
+En Flutter, el equivalente es **Google ML Kit Face Detection** (probabilidad de ojo abierto y ángulos de la cabeza), así que la misma máquina de estados se puede trasladar a la app.
+
+**Importante:** la página es solo un **consumidor de ejemplo**. Todo lo que decide el negocio (umbrales, bloqueos, inactivos, autorización obligatoria) lo decide el backend. La app Flutter haría exactamente las mismas llamadas.
 
 ## 7. Llamar a la API desde otros clientes
 
@@ -283,7 +322,7 @@ El consumidor decide qué hacer **mirando el `slug`**, no el texto. Así, por ej
 |---|---|---|
 | 401 | `UNAUTHORIZED` | `api/auth.py` |
 | 404 | `SUBJECT_NOT_FOUND` | Caso de uso |
-| 409 | `SUBJECT_ALREADY_EXISTS`, `SUBJECT_INACTIVE`, `MAX_ENROLLMENTS`, `NO_ENROLLMENTS` | Reglas de negocio |
+| 409 | `SUBJECT_ALREADY_EXISTS`, `SUBJECT_INACTIVE`, `MAX_ENROLLMENTS`, `NO_ENROLLMENTS`, `CONSENT_REQUIRED` | Reglas de negocio |
 | 422 | `VALIDATION_ERROR`, `INVALID_IMAGE`, `NO_FACE`, `MULTIPLE_FACES` | Validación de la petición o de la imagen |
 | 423 | `SUBJECT_LOCKED` | `LockoutPolicy` |
 | 502 / 503 | `ENGINE_ERROR`, `ENGINE_UNAVAILABLE` | Adaptador del motor |
