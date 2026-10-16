@@ -56,7 +56,7 @@ La imagen de la fachada descarga MediaPipe (~40 MB) al construirse. Para ejecuta
 | <http://localhost:8080/health> | Salud del servicio y del motor |
 | <http://localhost:8000> | UI de CompreFace (`demo@fis.local` / `Demo12345!`) |
 
-Guion de la demo: [docs/DEMO.md](docs/DEMO.md). Cómo funciona por dentro (frontend, backend, imágenes y API keys): [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).
+Cómo funciona por dentro (frontend, backend, imágenes y API keys): [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).
 
 > **¿Qué API key pongo en Swagger?** La de `FIS_API_KEY` del `.env` (por defecto `demo-key`): botón **Authorize** en <http://localhost:8080/docs>. La `COMPREFACE_API_KEY` es interna y no se usa desde fuera.
 
