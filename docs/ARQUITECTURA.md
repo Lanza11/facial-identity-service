@@ -218,8 +218,8 @@ Cada escenario es una función `render…()` que pinta dos columnas: **"Qué est
 | Ruta | Escenario | Dispositivo | Llamadas a la API |
 |---|---|---|---|
 | `#nuevo-cliente` | Nuevo cliente | Pantalla del asesor | `POST /subjects` → `POST /consents` → `POST /enrollments` |
-| `#titular` | ¿Es realmente quien dice ser? (ingreso al sistema) | Teléfono (pantalla de ingreso) | `POST /verifications` |
-| `#quien-es` | ¿Quién es este cliente? | Pantalla del asesor | `POST /identifications` |
+| `#titular` | ¿Es realmente quien dice ser? (ingreso al sistema) | Teléfono: elegir cuenta → ingresar con el rostro | `POST /verifications` |
+| `#quien-es` | ¿Quién es esta persona? | Pantalla de atención | `POST /identifications` |
 | `#personas`, `#auditoria` | Vistas del modo técnico | — | `GET /subjects`, `deactivate`/`reactivate`/`DELETE`, `GET /audit` |
 
 El modo técnico es una clase `tech` en `<body>`: todo lo marcado `.tech-only` (Swagger, API key, motor, métricas de la cámara, subir foto, panel "Llamadas al servicio") solo se ve con ella. La preferencia se recuerda en `localStorage`.
