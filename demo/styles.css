@@ -2,12 +2,12 @@
    Layout: barra superior, contenido centrado; cada escenario es narración (izquierda) + dispositivo
    (derecha), que se apilan en pantallas angostas. */
 :root {
-  --bg: #fff8ec;
+  --bg: #ffffff;
   --surface: #ffffff;
-  --surface-2: #fff2dc;
+  --surface-2: #fff5e6;
   --ink: #1f3a32;
   --muted: #5e7a70;
-  --line: #f0e2c8;
+  --line: #ece3d3;
   --brand: #127a5e;
   --brand-ink: #ffffff;
   --brand-soft: #d4f0e4;
@@ -192,8 +192,24 @@ body:not(.tech) .tech-only { display: none !important; }
 .app-card { background: var(--surface); border-radius: 18px; padding: 16px; display: grid; gap: 4px; border: 1px solid var(--line); text-align: left; width: 100%; }
 .app-card small { color: var(--muted); font-weight: 600; }
 .device-caption { font-size: .88rem; color: var(--muted); text-align: center; max-width: 40ch; }
-.who-select { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
-.who-select select { font: 600 .95rem var(--font-body); padding: 8px 12px; border-radius: 999px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); }
+.app-hint { color: var(--muted); font-size: .92rem; margin-top: -8px; }
+.accounts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; width: 100%; }
+.account {
+  width: 100%; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
+  padding: 10px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .15s;
+}
+.account:hover { border-color: var(--brand); transform: translateY(-1px); }
+.account-text { display: grid; min-width: 0; }
+.account-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-text small { color: var(--muted); font-size: .78rem; }
+.account-go { color: var(--brand); font: 700 1.3rem var(--font-display); }
+.avatar {
+  width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex: none;
+  display: grid; place-items: center; background: var(--brand-soft); color: var(--brand);
+  font: 700 1.1rem var(--font-display);
+}
+.avatar.large { width: 84px; height: 84px; font-size: 2rem; border: 3px solid var(--mango); }
 
 /* Cámara */
 .cam { position: relative; width: 100%; aspect-ratio: 3 / 4; border-radius: 22px; overflow: hidden; background: var(--cam-bg); --oval: rgba(255,255,255,.7); }

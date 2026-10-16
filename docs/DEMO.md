@@ -37,11 +37,11 @@ La columna **"Qué está pasando"** de cada escenario ya narra cada paso; puedes
    - Muestra el paso de **autorización**: sin ella el sistema no deja registrar el rostro (Ley 1581).
    - En la cámara, la guía dice qué hacer: centrarse, parpadear, girar la cabeza y volver al frente. La foto se toma sola.
 3. **¿Es realmente quien dice ser?**
-   - En la pantalla de ingreso (sirve igual para la app de clientes o para el web administrativo), Ana pulsa *Ingresar con mi rostro*.
+   - En la pantalla de ingreso (sirve igual para la app de clientes o para el web administrativo), Ana elige su cuenta y pulsa *Ingresar con mi rostro*. Con *No soy Ana · cambiar de cuenta* se vuelve al selector.
    - Resultado: su foto registrada al lado de la de ahora, con el porcentaje de similitud, "¡Eres tú, Ana!" y "Acceso concedido".
    - Repite con **otra persona** frente a la cámara: "No pudimos confirmar que eres Ana" y no hay acceso.
    - Opcional: pon **la foto de Ana** (impresa o en otro celular) frente a la cámara. No parpadea ni gira, así que la respuesta es "No detectamos a una persona real".
-4. **¿Quién es este cliente?** Llega alguien sin documento; el asesor pulsa *Empezar* y el sistema lo reconoce entre todos los clientes. Una persona no registrada da "No encontramos a esta persona".
+4. **¿Quién es esta persona?** Llega alguien sin documento; quien atiende pulsa *Empezar* y el sistema la reconoce entre todas las personas registradas. Una persona no registrada da "No encontramos a esta persona".
 5. **Cierre.** Es un módulo interno e independiente: puede usarlo la app de clientes, el web administrativo o ambos.
 
 ## Parte 2: modo técnico (desarrolladores)

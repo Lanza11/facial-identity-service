@@ -13,15 +13,15 @@ let preferredSubjectId = null;
 const API_MESSAGES = {
   NO_FACE: ["No vemos un rostro en la foto", "Prueba con más luz, mirando de frente a la cámara."],
   MULTIPLE_FACES: ["Aparece más de una persona", "Asegúrate de que solo haya una persona frente a la cámara."],
-  SUBJECT_INACTIVE: ["Este cliente está desactivado", "Reactívalo para poder usar su rostro."],
+  SUBJECT_INACTIVE: ["Esta persona está desactivada", "Reactívala para poder usar su rostro."],
   SUBJECT_LOCKED: [
     "Bloqueado por seguridad",
-    "Hubo varios intentos fallidos seguidos. El cliente podrá intentarlo de nuevo en unos minutos.",
+    "Hubo varios intentos fallidos seguidos. Podrá intentarlo de nuevo en unos minutos.",
   ],
-  MAX_ENROLLMENTS: ["Ya tiene suficientes fotos", "Este cliente alcanzó el máximo de fotos registradas."],
-  NO_ENROLLMENTS: ["Aún no tiene su rostro registrado", "Regístralo primero en el escenario Nuevo cliente."],
-  CONSENT_REQUIRED: ["Falta la autorización", "El cliente debe autorizar el uso de su rostro antes de registrarlo."],
-  SUBJECT_ALREADY_EXISTS: ["Ese cliente ya existe", "Ya hay un cliente registrado con esa identificación."],
+  MAX_ENROLLMENTS: ["Ya tiene suficientes fotos", "Esta persona alcanzó el máximo de fotos registradas."],
+  NO_ENROLLMENTS: ["Aún no tiene su rostro registrado", "Regístrala primero en el escenario Nuevo cliente."],
+  CONSENT_REQUIRED: ["Falta la autorización", "La persona debe autorizar el uso de su rostro antes de registrarlo."],
+  SUBJECT_ALREADY_EXISTS: ["Esa persona ya existe", "Ya hay alguien registrado con esa identificación."],
   ENGINE_UNAVAILABLE: [
     "El reconocimiento no está disponible",
     "Revisa que el servicio y CompreFace estén encendidos (docker compose up -d).",
@@ -240,15 +240,8 @@ async function verifiableSubjects() {
   return subjects.filter((s) => s.status === "ACTIVE" && s.enrollments > 0);
 }
 
-function subjectOptions(subjects) {
-  const selected = subjects.some((s) => s.subjectId === preferredSubjectId) ? preferredSubjectId : subjects[0]?.subjectId;
-  return subjects
-    .map((s) => `<option value="${s.subjectId}" ${s.subjectId === selected ? "selected" : ""}>${esc(s.displayName)}</option>`)
-    .join("");
-}
-
 function noSubjectsMarkup() {
-  return `<div class="panel"><p>Primero registra al menos un cliente con su rostro.</p>
+  return `<div class="panel"><p>Primero registra al menos una persona con su rostro.</p>
     <div class="actions"><a class="btn" href="#nuevo-cliente">Ir a Nuevo cliente</a></div></div>`;
 }
 
@@ -262,7 +255,7 @@ function renderHome() {
     <section class="scenario-grid" aria-label="Escenarios">
       ${scenarioCard("nuevo-cliente", "Nuevo cliente", "Asesor en sede · al firmar el crédito", "El cliente autoriza el uso de su rostro y lo registramos en segundos.")}
       ${scenarioCard("titular", "¿Es realmente quien dice ser?", "Al ingresar al sistema · app o web", "Antes de dar acceso, su rostro confirma que quien entra es esa persona.")}
-      ${scenarioCard("quien-es", "¿Quién es este cliente?", "Asesor en sede · cliente sin documento", "Lo reconocemos entre todos los clientes registrados.")}
+      ${scenarioCard("quien-es", "¿Quién es esta persona?", "Atención presencial · sin documento", "La reconocemos entre todas las personas registradas.")}
     </section>
     <aside class="privacy-note">
       <p><strong>Las fotos no se guardan.</strong> El servicio conserva solo una huella numérica del rostro, y únicamente con la autorización del cliente. El cliente puede pedir que se elimine cuando quiera.</p>
@@ -377,7 +370,7 @@ function renderEnroll() {
       <div class="result">
         ${verdictMarkup("ok", `¡Listo! ${esc(firstName(subject.displayName))} ya tiene su rostro registrado`, "Desde ahora su rostro sirve para confirmar su identidad.")}
         <div class="compare" style="grid-template-columns:1fr;max-width:180px"><figure><img src="${capture.thumbnail}" alt="Foto registrada"><figcaption>Foto registrada (solo en este equipo)</figcaption></figure></div>
-        <div class="actions"><a class="btn" href="#titular">Probar: ¿es el titular?</a><button class="btn ghost" id="another">Registrar otro cliente</button></div>
+        <div class="actions"><a class="btn" href="#titular">Probar el ingreso con su rostro</a><button class="btn ghost" id="another">Registrar otro cliente</button></div>
       </div>`;
     panel.querySelector("#another").addEventListener("click", () => showData());
   };
@@ -392,11 +385,37 @@ function phoneMarkup(content) {
     </div></div>`;
 }
 
+function avatarMarkup(subject) {
+  const photo = getPhoto(subject.subjectId);
+  return photo
+    ? `<img class="avatar" src="${photo}" alt="">`
+    : `<span class="avatar" aria-hidden="true">${esc(firstName(subject.displayName).charAt(0).toUpperCase())}</span>`;
+}
+
+const maskId = (externalId) => `•••${String(externalId).slice(-4)}`;
+
+function appChooser(subjects) {
+  return `
+    <div class="greeting">Bienvenido</div>
+    <p class="app-hint">Elige tu cuenta para ingresar</p>
+    <ul class="accounts">${subjects
+      .map(
+        (s) => `<li><button class="account" data-id="${s.subjectId}">
+          ${avatarMarkup(s)}
+          <span class="account-text"><strong>${esc(s.displayName)}</strong><small>ID ${esc(maskId(s.externalId))}</small></span>
+          <span class="account-go" aria-hidden="true">›</span>
+        </button></li>`,
+      )
+      .join("")}</ul>`;
+}
+
 function appHome(subject) {
   return `
+    ${avatarMarkup(subject).replace('class="avatar"', 'class="avatar large"')}
     <div class="greeting">Hola, ${esc(firstName(subject.displayName))}</div>
     <div class="app-card"><small>Para ingresar al sistema</small><span>Confirma que eres tú con tu rostro. Sin contraseñas.</span></div>
-    <button class="btn mango" id="login">Ingresar con mi rostro</button>`;
+    <button class="btn mango" id="login">Ingresar con mi rostro</button>
+    <button class="btn quiet small" id="switch">No soy ${esc(firstName(subject.displayName))} · cambiar de cuenta</button>`;
 }
 
 async function renderPhoneScenario(config) {
@@ -405,7 +424,7 @@ async function renderPhoneScenario(config) {
     title: config.title,
     lead: config.lead,
     steps: config.steps,
-    device: `<div class="who-select" id="who"></div><div id="phone-host"></div><p class="device-caption">${config.caption}</p>`,
+    device: `<div id="phone-host"></div><p class="device-caption">${config.caption}</p>`,
   });
   let subjects;
   try {
@@ -418,22 +437,25 @@ async function renderPhoneScenario(config) {
     view.querySelector("#phone-host").innerHTML = noSubjectsMarkup();
     return;
   }
-  view.querySelector("#who").innerHTML = `<label for="who-select">${config.whoLabel}</label><select id="who-select">${subjectOptions(subjects)}</select>`;
-  const select = view.querySelector("#who-select");
-  const start = () => {
-    const subject = subjects.find((s) => s.subjectId === select.value);
-    preferredSubjectId = subject.subjectId;
-    showAppHome(subject);
+  const body = () => view.querySelector("#app-body");
+  const showChooser = () => {
+    leaveView();
+    setNarration(0);
+    view.querySelector("#phone-host").innerHTML = phoneMarkup(appChooser(subjects));
+    body().addEventListener("click", (event) => {
+      const account = event.target.closest("[data-id]");
+      if (account) showAppHome(subjects.find((s) => s.subjectId === account.dataset.id));
+    });
   };
   const showAppHome = (subject) => {
     leaveView();
     setNarration(0);
+    preferredSubjectId = subject.subjectId;
     view.querySelector("#phone-host").innerHTML = phoneMarkup(appHome(subject));
-    view.querySelector("#login").addEventListener("click", () => config.onStart(subject, body(), () => showAppHome(subject)));
+    view.querySelector("#login").addEventListener("click", () => config.onStart(subject, body(), showChooser));
+    view.querySelector("#switch").addEventListener("click", showChooser);
   };
-  const body = () => view.querySelector("#app-body");
-  select.addEventListener("change", start);
-  start();
+  showChooser();
 }
 
 function renderVerify() {
@@ -441,10 +463,9 @@ function renderVerify() {
     number: 2,
     title: "¿Es realmente quien dice ser?",
     lead: "Al ingresar al sistema, el rostro confirma que quien entra es realmente esa persona. Sirve igual para la app o para el web administrativo.",
-    whoLabel: "Persona que intenta ingresar:",
     caption: "Simulación de la pantalla de ingreso.",
     steps: [
-      ["La persona quiere ingresar", "Abre el sistema y elige entrar con su rostro."],
+      ["La persona quiere ingresar", "Elige su cuenta y entra con su rostro."],
       ["El sistema pide confirmar su identidad", "Una sola foto, sin contraseñas."],
       ["Prueba de vida", "Parpadea y gira la cabeza: una foto no puede hacerlo."],
       ["Comparación", "Se compara con el rostro que registró."],
@@ -501,23 +522,23 @@ async function verifyFlow(subject, body, restart) {
 function renderIdentify() {
   view.innerHTML = scenarioLayout({
     number: 3,
-    title: "¿Quién es este cliente?",
-    lead: "Llega un cliente a la sede sin su documento. Con su rostro lo encontramos entre todos los clientes registrados.",
+    title: "¿Quién es esta persona?",
+    lead: "Llega alguien sin documento. Con su rostro la encontramos entre todas las personas registradas.",
     steps: [
-      ["Llega un cliente sin documento", "El asesor no sabe quién es."],
-      ["Prueba de vida", "El cliente parpadea y gira la cabeza frente a la cámara."],
-      ["Búsqueda", "Se compara con todos los clientes activos registrados."],
-      ["Resultado", "El asesor ve quién es, o que no está registrado."],
+      ["Llega una persona sin documento", "Quien atiende no sabe quién es."],
+      ["Prueba de vida", "La persona parpadea y gira la cabeza frente a la cámara."],
+      ["Búsqueda", "Se compara con todas las personas activas registradas."],
+      ["Resultado", "Se ve quién es, o que no está registrada."],
     ],
     device: `<div class="panel" id="identify-panel"></div>`,
   });
   const panel = view.querySelector("#identify-panel");
-  const head = `<div class="panel-head"><span class="who">Pantalla del asesor</span></div>`;
+  const head = `<div class="panel-head"><span class="who">Pantalla de atención</span></div>`;
 
   const showStart = () => {
     setNarration(0);
-    panel.innerHTML = `${head}<h2>Identificar a un cliente</h2>
-      <p class="lead" style="font-size:1rem">Pídele al cliente que mire a la cámara. No necesitas saber su nombre.</p>
+    panel.innerHTML = `${head}<h2>Identificar a una persona</h2>
+      <p class="lead" style="font-size:1rem">Pídele que mire a la cámara. No necesitas saber su nombre.</p>
       <div class="actions"><button class="btn" id="start">Empezar</button></div>`;
     panel.querySelector("#start").addEventListener("click", showCapture);
   };
@@ -540,7 +561,7 @@ function renderIdentify() {
       return;
     }
     setNarration(2);
-    panel.innerHTML = `${head}<div class="result"><div class="spinner" role="status" aria-label="Buscando"></div><p>Buscando entre los clientes…</p></div>`;
+    panel.innerHTML = `${head}<div class="result"><div class="spinner" role="status" aria-label="Buscando"></div><p>Buscando entre las personas registradas…</p></div>`;
     try {
       showResult(await api.identify(capture.blob, capture.liveness), capture);
     } catch (error) {
@@ -555,13 +576,13 @@ function renderIdentify() {
     const tone = best ? toneOf(result.decision) : "bad";
     const verdict = best
       ? result.decision === "MATCH"
-        ? verdictMarkup("ok", `Es ${esc(best.displayName)}`, `Identificación del cliente: ${esc(best.externalId)}`)
+        ? verdictMarkup("ok", `Es ${esc(best.displayName)}`, `Identificación: ${esc(best.externalId)}`)
         : verdictMarkup("warn", `Podría ser ${esc(best.displayName)}`, "La similitud no es suficiente. Pide un documento para confirmar.")
-      : verdictMarkup("bad", "No encontramos a esta persona", "No está entre los clientes registrados.");
+      : verdictMarkup("bad", "No encontramos a esta persona", "No está entre las personas registradas.");
     panel.innerHTML = `${head}<div class="result">
       ${compareMarkup(best ? getPhoto(best.subjectId) : null, capture.thumbnail, best ? best.score : null, tone)}
       ${verdict}
-      <div class="actions"><button class="btn" id="again">Identificar a otra persona</button>${best ? "" : `<a class="btn ghost" href="#nuevo-cliente">Registrarlo como nuevo cliente</a>`}</div>
+      <div class="actions"><button class="btn" id="again">Identificar a otra persona</button>${best ? "" : `<a class="btn ghost" href="#nuevo-cliente">Registrar a esta persona</a>`}</div>
     </div>`;
     panel.querySelector("#again").addEventListener("click", showCapture);
   };
