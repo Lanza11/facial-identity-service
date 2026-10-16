@@ -1,0 +1,95 @@
+# Prototipo: CompreFace 1.2.0 (motor) + facial-identity-service (fachada).
+# Basado en el docker-compose oficial del release v1.2.0 de exadel-inc/CompreFace.
+name: facial-identity
+
+volumes:
+  compreface-postgres-data:
+  fis-data:
+
+x-compreface-db: &compreface-db
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+  SPRING_PROFILES_ACTIVE: dev
+
+services:
+  compreface-postgres-db:
+    image: exadel/compreface-postgres-db:1.2.0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: frs
+    volumes:
+      - compreface-postgres-data:/var/lib/postgresql/data
+
+  compreface-admin:
+    image: exadel/compreface-admin:1.2.0
+    restart: unless-stopped
+    environment:
+      <<: *compreface-db
+      ENABLE_EMAIL_SERVER: "false"
+      ADMIN_JAVA_OPTS: -Xmx1g
+      MAX_FILE_SIZE: 5MB
+      MAX_REQUEST_SIZE: 10MB
+    depends_on:
+      - compreface-postgres-db
+      - compreface-api
+
+  compreface-api:
+    image: exadel/compreface-api:1.2.0
+    restart: unless-stopped
+    environment:
+      <<: *compreface-db
+      API_JAVA_OPTS: -Xmx2g
+      # La fachada solo necesita embeddings; no guardamos fotos en el motor.
+      SAVE_IMAGES_TO_DB: "false"
+      MAX_FILE_SIZE: 5MB
+      MAX_REQUEST_SIZE: 10MB
+      CONNECTION_TIMEOUT: 10000
+      READ_TIMEOUT: 60000
+    depends_on:
+      - compreface-postgres-db
+
+  compreface-fe:
+    image: exadel/compreface-fe:1.2.0
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    environment:
+      CLIENT_MAX_BODY_SIZE: 10M
+      PROXY_READ_TIMEOUT: 60000ms
+      PROXY_CONNECT_TIMEOUT: 10000ms
+    depends_on:
+      - compreface-api
+      - compreface-admin
+
+  compreface-core:
+    # Build Mobilenet (ArcFace, AVX2): el más rápido en CPU. Alternativas: 1.2.0 (FaceNet), 1.2.0-arcface-r100.
+    image: exadel/compreface-core:${COMPREFACE_CORE_TAG:-1.2.0-mobilenet}
+    restart: unless-stopped
+    environment:
+      ML_PORT: 3000
+      IMG_LENGTH_LIMIT: 640
+      UWSGI_PROCESSES: 2
+      UWSGI_THREADS: 1
+    healthcheck:
+      test: curl --fail http://localhost:3000/healthcheck || exit 1
+      interval: 10s
+      timeout: 1s
+
+  facade:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      COMPREFACE_URL: http://compreface-api:8080
+      FIS_DATA_DIR: /data
+    volumes:
+      - fis-data:/data
+    depends_on:
+      - compreface-api
