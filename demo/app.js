@@ -255,7 +255,7 @@ function renderHome() {
     <section class="scenario-grid" aria-label="Escenarios">
       ${scenarioCard("nuevo-cliente", "Nuevo cliente", "Asesor en sede · al firmar el crédito", "El cliente autoriza el uso de su rostro y lo registramos en segundos.")}
       ${scenarioCard("titular", "¿Es realmente quien dice ser?", "Al ingresar al sistema · app o web", "Antes de dar acceso, su rostro confirma que quien entra es esa persona.")}
-      ${scenarioCard("quien-es", "¿Quién es esta persona?", "Atención presencial · sin documento", "La reconocemos entre todas las personas registradas.")}
+      ${scenarioCard("quien-es", "¿Quién es esta persona?", "Reconocimiento facial · sin autenticación previa", "La reconocemos entre todas las personas registradas.")}
     </section>
     <aside class="privacy-note">
       <p><strong>Las fotos no se guardan.</strong> El servicio conserva solo una huella numérica del rostro, y únicamente con la autorización del cliente. El cliente puede pedir que se elimine cuando quiera.</p>
